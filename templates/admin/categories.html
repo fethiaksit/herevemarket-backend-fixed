@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Hereve Market Admin - Kategoriler</title>
+  <link rel="stylesheet" href="/public/admin/admin.css">
+</head>
+<body>
+<header>
+  <div class="header-content">
+    <h1>Hereve Market – Admin Panel</h1>
+    <nav>
+      <a class="active" href="/admin/categories">Kategoriler</a>
+      <a href="/admin/products">Ürünler</a>
+      <a href="/admin/orders">Siparişler</a>
+      <button type="button" id="logoutButton">Çıkış</button>
+    </nav>
+  </div>
+</header>
+<main>
+  <section>
+    <h2 class="page-title">Kategoriler</h2>
+    <form id="addCategory">
+      <input name="name" placeholder="Kategori adı">
+      <button type="submit">Ekle</button>
+    </form>
+  </section>
+  <section>
+    <h3>Liste</h3>
+    <div id="categoryList" class="list"></div>
+    <form id="editCategory" class="stacked" style="display:none; margin-top:10px;">
+      <hr>
+      <div class="muted">Seçilen kategori: <strong id="catName"></strong> <span id="catId" class="muted"></span></div>
+      <label>Ad</label>
+      <input name="name" placeholder="Yeni ad">
+      <label><input type="checkbox" name="isActive"> Aktif</label>
+      <button type="submit">Güncelle</button>
+      <button type="button" id="deleteCategory" class="danger">Pasifleştir</button>
+    </form>
+  </section>
+</main>
+<script src="/public/admin/admin.js"></script>
+<script>
+  requireAuth();
+
+  let selectedCategory = null;
+
+  async function loadCategories() {
+    const res = await fetch("/admin/api/categories", { headers: authHeaders() });
+    if (handleUnauthorized(res)) return;
+
+    const payload = await safeJson(res);
+    const data = (payload && payload.data) ? payload.data : (payload || []);
+
+    const el = document.getElementById("categoryList");
+    el.innerHTML = "";
+
+    if (!Array.isArray(data) || data.length === 0) {
+      el.innerHTML = "<div class='muted'>Kategori yok</div>";
+      return;
+    }
+
+    data.forEach(function(category) {
+      const card = document.createElement("div");
+      card.className = "card clickable";
+      card.innerHTML = "<div><strong>" + (category.name || "-") + "</strong></div>" +
+        "<div class='muted'>" + (category.isActive ? "Aktif" : "Pasif") + "</div>";
+      card.onclick = function() { selectCategory(category); };
+      el.appendChild(card);
+    });
+  }
+
+  function selectCategory(category) {
+    selectedCategory = category;
+    const id = getId(category);
+
+    document.getElementById("editCategory").style.display = "grid";
+    document.getElementById("catName").innerText = category.name || "-";
+    document.getElementById("catId").innerText = id ? ("(id: " + id + ")") : "(id yok)";
+
+    const form = document.getElementById("editCategory");
+    form.elements.name.value = category.name || "";
+    form.elements.isActive.checked = !!category.isActive;
+  }
+
+  document.getElementById("addCategory").addEventListener("submit", async function(event) {
+    event.preventDefault();
+
+    const form = new FormData(event.target);
+    const res = await fetch("/admin/api/categories", {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ name: form.get("name"), isActive: true })
+    });
+
+    if (handleUnauthorized(res)) return;
+
+    event.target.reset();
+    loadCategories();
+  });
+
+  document.getElementById("editCategory").addEventListener("submit", async function(event) {
+    event.preventDefault();
+    if (!selectedCategory) return;
+
+    const id = getId(selectedCategory);
+    if (!id) {
+      alert("Kategori id yok");
+      return;
+    }
+
+    const form = new FormData(event.target);
+    const res = await fetch("/admin/api/categories/" + id, {
+      method: "PUT",
+      headers: authHeaders(),
+      body: JSON.stringify({
+        name: form.get("name"),
+        isActive: form.get("isActive") === "on"
+      })
+    });
+
+    if (handleUnauthorized(res)) return;
+
+    loadCategories();
+  });
+
+  document.getElementById("deleteCategory").addEventListener("click", async function() {
+    if (!selectedCategory) return;
+
+    const id = getId(selectedCategory);
+    if (!id) {
+      alert("Kategori id yok");
+      return;
+    }
+
+    const res = await fetch("/admin/api/categories/" + id, {
+      method: "DELETE",
+      headers: authHeaders()
+    });
+
+    if (handleUnauthorized(res)) return;
+
+    selectedCategory = null;
+    document.getElementById("editCategory").style.display = "none";
+    loadCategories();
+  });
+
+  loadCategories();
+</script>
+</body>
+</html>

@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Hereve Market Admin - Ürünler</title>
+  <link rel="stylesheet" href="/public/admin/admin.css">
+</head>
+<body>
+<header>
+  <div class="header-content">
+    <h1>Hereve Market – Admin Panel</h1>
+    <nav>
+      <a href="/admin/categories">Kategoriler</a>
+      <a class="active" href="/admin/products">Ürünler</a>
+      <a href="/admin/orders">Siparişler</a>
+      <button type="button" id="logoutButton">Çıkış</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <section>
+    <h2 class="page-title">Ürünler</h2>
+
+    <label>Kategori Filtresi</label>
+    <select id="categoryFilter">
+      <option value="">Tüm Kategoriler</option>
+    </select>
+  </section>
+
+  <section class="grid-two">
+    <div>
+      <h3>Yeni Ürün</h3>
+      <form id="addProduct" enctype="multipart/form-data">
+        <label>Ürün Adı</label>
+        <input name="name" placeholder="Ürün adı" required>
+
+        <label>Kategori</label>
+        <select name="category_id" id="addProductCategorySelect" class="product-category-select" required>
+          <option value="" disabled selected>Kategori Seç</option>
+        </select>
+
+        <label>Fiyat</label>
+        <input name="price" type="number" min="0" step="0.01" placeholder="Fiyat" required>
+
+        <label>Stok</label>
+        <input name="stock" type="number" min="0" step="1" placeholder="Stok" required>
+
+        <label>Ürün Açıklaması</label>
+        <textarea name="description" rows="3" placeholder="Ürün açıklaması" required></textarea>
+
+        <label>Marka</label>
+        <input name="brand" placeholder="Marka">
+
+        <label>Barkod</label>
+        <input name="barcode" placeholder="Barkod">
+
+        <label>Kampanya</label>
+        <label><input type="checkbox" name="isCampaign"> Kampanya</label>
+
+        <label>Aktif</label>
+        <label><input type="checkbox" name="isActive" checked> Aktif</label>
+
+        <label>Görsel Yükle</label>
+        <input type="file" name="image" accept="image/*">
+
+        <button type="submit">Ekle</button>
+      </form>
+    </div>
+
+    <div>
+      <h3>Düzenle</h3>
+      <form id="editProduct" class="stacked" style="display:none;" enctype="multipart/form-data">
+        <div class="muted">
+          Seçilen ürün: <strong id="prodName"></strong>
+          <span id="prodId" class="muted"></span>
+        </div>
+
+        <label>Ad</label>
+        <input name="name" placeholder="Ürün adı">
+
+        <label>Fiyat</label>
+        <input name="price" type="number" min="0" step="0.01" placeholder="Fiyat">
+
+        <label>Kategori</label>
+        <!-- ✅ id unique + ✅ backend uyumlu name -->
+        <select name="category_id" id="editProductCategorySelect" class="product-category-select" multiple>
+          <option value="">Kategori Seç</option>
+        </select>
+
+        <label>Marka</label>
+        <input name="brand" placeholder="Marka">
+
+        <label>Barkod</label>
+        <input name="barcode" placeholder="Barkod">
+
+        <label>Stok</label>
+        <input name="stock" type="number" min="0" step="1" placeholder="Stok">
+
+        <label>Ürün Açıklaması</label>
+        <textarea name="description" rows="3" placeholder="Ürün açıklaması"></textarea>
+
+        <label>Görsel Yükle</label>
+        <input type="file" name="image" accept="image/*">
+
+        <label><input type="checkbox" name="isCampaign"> Kampanya</label>
+        <label><input type="checkbox" name="isActive"> Aktif</label>
+
+        <button type="submit">Güncelle</button>
+        <button type="button" id="deleteProduct" class="danger">Pasifleştir</button>
+      </form>
+    </div>
+  </section>
+
+  <section>
+    <h3>Liste</h3>
+    <table id="productList" class="table">
+      <thead>
+        <tr>
+          <th>Ürün</th>
+          <th>Marka</th>
+          <th>Barkod</th>
+          <th>Stok</th>
+          <th>Kampanya</th>
+          <th>İşlemler</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+    <div id="productStatus" class="muted"></div>
+    <div id="productPagination" class="pagination"></div>
+  </section>
+</main>
+
+<script src="/public/admin/admin.js"></script>
+<script src="/public/admin/products.js"></script>
+</body>
+</html>

@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Hereve Market – Admin Login</title>
+  <link rel="stylesheet" href="/public/admin/admin.css">
+</head>
+<body>
+
+<header>
+  <div class="header-content">
+    <h1>Hereve Market – Admin Panel</h1>
+  </div>
+</header>
+
+<main>
+  <section>
+    <h2 class="page-title">Admin Login</h2>
+
+    <form id="loginForm">
+      <label>Email</label>
+      <input name="email" type="email" required value="">
+
+      <label>Password</label>
+      <input name="password" type="password" required value="">
+
+      <button type="submit">Login</button>
+    </form>
+
+    <div id="loginStatus" class="muted"></div>
+  </section>
+</main>
+
+<script src="/public/admin/admin.js"></script>
+<script>
+  // 🔐 Zaten login olmuşsa admin paneline gönder
+  redirectIfAuthenticated();
+
+  const form = document.getElementById("loginForm");
+
+  form.addEventListener("submit", async function (event) {
+    event.preventDefault();
+
+    setText("loginStatus", "Giriş yapılıyor...");
+
+    try {
+      const formData = new FormData(form);
+
+      const res = await fetch("/admin/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: formData.get("email"),
+          password: formData.get("password"),
+        }),
+      });
+
+      const payload = await safeJson(res);
+
+      if (!res.ok || !payload?.token) {
+        setText(
+          "loginStatus",
+          payload?.error || "Giriş başarısız. Bilgileri kontrol edin."
+        );
+        return;
+      }
+
+      // ✅ token kaydet
+      setToken(payload.token);
+
+      // ✅ admin categories'e yönlendir
+      redirectToCategories();
+
+    } catch (err) {
+      console.error("[AdminLogin] error", err);
+      setText("loginStatus", "Sunucuya bağlanılamadı.");
+    }
+  });
+</script>
+
+</body>
+</html>

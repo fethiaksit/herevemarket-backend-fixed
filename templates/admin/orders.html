@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Hereve Market Admin - Siparişler</title>
+  <link rel="stylesheet" href="/public/admin/admin.css">
+</head>
+<body>
+<header>
+  <div class="header-content">
+    <h1>Hereve Market – Admin Panel</h1>
+    <nav>
+      <a href="/admin/categories">Kategoriler</a>
+      <a href="/admin/products">Ürünler</a>
+      <a class="active" href="/admin/orders">Siparişler</a>
+      <button type="button" id="logoutButton">Çıkış</button>
+    </nav>
+  </div>
+</header>
+<main>
+  <section>
+    <h2 class="page-title">Siparişler</h2>
+    <div id="ordersStatus" class="muted"></div>
+    <div class="table-wrapper">
+      <table class="orders-table">
+        <thead>
+          <tr>
+            <th>Sipariş ID</th>
+            <th>Tarih</th>
+            <th>Müşteri</th>
+            <th>Ödeme</th>
+            <th class="numeric">Ürün</th>
+            <th class="numeric">Toplam</th>
+            <th>Durum</th>
+            <th class="actions">Aksiyon</th>
+          </tr>
+        </thead>
+        <tbody id="ordersTableBody"></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+<script src="/public/admin/admin.js"></script>
+<script src="/public/admin/orders.js"></script>
+</body>
+</html>
