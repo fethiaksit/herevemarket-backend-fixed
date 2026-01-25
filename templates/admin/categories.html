@@ -88,10 +88,17 @@
     event.preventDefault();
 
     const form = new FormData(event.target);
+    const payload = {
+      name: form.get("name"),
+      isActive: true
+    };
     const res = await fetch("/admin/api/categories", {
       method: "POST",
-      headers: authHeaders(),
-      body: JSON.stringify({ name: form.get("name"), isActive: true })
+      headers: {
+        ...authHeaders(),
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(payload)
     });
 
     if (handleUnauthorized(res)) return;
@@ -111,13 +118,17 @@
     }
 
     const form = new FormData(event.target);
+    const payload = {
+      name: form.get("name"),
+      isActive: form.get("isActive") === "on"
+    };
     const res = await fetch("/admin/api/categories/" + id, {
       method: "PUT",
-      headers: authHeaders(),
-      body: JSON.stringify({
-        name: form.get("name"),
-        isActive: form.get("isActive") === "on"
-      })
+      headers: {
+        ...authHeaders(),
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(payload)
     });
 
     if (handleUnauthorized(res)) return;
