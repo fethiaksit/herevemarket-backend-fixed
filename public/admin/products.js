@@ -3,6 +3,10 @@ requireAuth();
 let selectedProduct = null;
 let currentProducts = [];
 let cachedCategories = [];
+let currentPage = 1;
+let pageLimit = 20;
+let totalPages = 1;
+let lastQueryKey = "";
 const isDev = ["localhost", "127.0.0.1"].includes(window.location.hostname);
 
 // ---------- Helpers ----------
@@ -253,23 +257,136 @@ function renderProductsTable(data) {
   });
 }
 
-async function loadProducts() {
+function ensurePaginationContainer() {
+  let container = el("productPagination");
+  if (container) return container;
+
+  const table = el("productList");
+  if (!table || !table.parentNode) return null;
+
+  container = document.createElement("div");
+  container.id = "productPagination";
+  container.className = "pagination";
+
+  const status = el("productStatus");
+  if (status && status.parentNode === table.parentNode) {
+    status.insertAdjacentElement("afterend", container);
+  } else {
+    table.insertAdjacentElement("afterend", container);
+  }
+
+  return container;
+}
+
+function renderPagination() {
+  const container = ensurePaginationContainer();
+  if (!container) return;
+
+  container.innerHTML = "";
+
+  const safeTotalPages = Math.max(1, totalPages || 1);
+  const safePage = Math.min(Math.max(1, currentPage || 1), safeTotalPages);
+
+  const prevBtn = document.createElement("button");
+  prevBtn.type = "button";
+  prevBtn.textContent = "Önceki";
+  prevBtn.disabled = safePage <= 1;
+  prevBtn.addEventListener("click", () => loadProducts(safePage - 1));
+
+  const nextBtn = document.createElement("button");
+  nextBtn.type = "button";
+  nextBtn.textContent = "Sonraki";
+  nextBtn.disabled = safePage >= safeTotalPages;
+  nextBtn.addEventListener("click", () => loadProducts(safePage + 1));
+
+  const pageInfo = document.createElement("span");
+  pageInfo.className = "muted";
+  pageInfo.textContent = `Sayfa ${safePage} / ${safeTotalPages}`;
+
+  const limitWrap = document.createElement("label");
+  limitWrap.className = "muted";
+  limitWrap.textContent = "Sayfa başı ";
+
+  const limitSelect = document.createElement("select");
+  [10, 20, 50, 100].forEach((limit) => {
+    const opt = document.createElement("option");
+    opt.value = String(limit);
+    opt.textContent = String(limit);
+    if (Number(limit) === Number(pageLimit)) opt.selected = true;
+    limitSelect.appendChild(opt);
+  });
+
+  limitSelect.addEventListener("change", (event) => {
+    const nextLimit = Number(event.target.value);
+    if (!Number.isNaN(nextLimit)) {
+      pageLimit = nextLimit;
+    }
+    loadProducts(1);
+  });
+
+  limitWrap.appendChild(limitSelect);
+
+  container.appendChild(prevBtn);
+  container.appendChild(pageInfo);
+  container.appendChild(nextBtn);
+  container.appendChild(limitWrap);
+}
+
+async function loadProducts(page = 1) {
   const selected = el("categoryFilter")?.value || "";
-  let url = "/admin/api/products";
+  const searchInput = el("productSearch") || el("searchInput");
+  const isActiveFilter = el("isActiveFilter");
+  const params = new URLSearchParams();
 
   // ✅ backend: category=NAME, frontend: select value=id
   if (selected) {
     const matched = cachedCategories.find(cat => getCategoryId(cat) === selected);
     if (matched?.name) {
-      url += "?" + new URLSearchParams({ category: matched.name }).toString();
+      params.set("category", matched.name);
     } else {
       console.warn("Kategori filtresi id eşleşmedi:", selected);
     }
   }
 
+  const searchValue = typeof searchInput?.value === "string" ? searchInput.value.trim() : "";
+  if (searchValue) {
+    params.set("search", searchValue);
+  }
+
+  if (isActiveFilter) {
+    if (isActiveFilter.type === "checkbox") {
+      if (isActiveFilter.checked) {
+        params.set("isActive", "true");
+      }
+    } else if (isActiveFilter.value !== "") {
+      params.set("isActive", isActiveFilter.value);
+    }
+  }
+
+  const queryKey = JSON.stringify({
+    category: params.get("category") || "",
+    search: params.get("search") || "",
+    isActive: params.get("isActive") || ""
+  });
+  if (lastQueryKey && lastQueryKey !== queryKey && page !== 1) {
+    page = 1;
+  }
+
+  params.set("page", String(page));
+  params.set("limit", String(pageLimit));
+  const url = "/admin/api/products?" + params.toString();
+
   setStatus("Ürünler yükleniyor...");
 
-  const res = await fetch(url, { headers: authHeaders() });
+  let res;
+  try {
+    res = await fetch(url, { headers: authHeaders() });
+  } catch (error) {
+    console.error("Ürünler isteği ağ hatası:", error);
+    setStatus("Hata: ürünler getirilemedi");
+    return;
+  }
+
   if (handleUnauthorized(res)) return;
 
   const payload = await safeJson(res);
@@ -281,8 +398,23 @@ async function loadProducts() {
 
   const data = (payload && payload.data) ? payload.data : (payload || []);
   currentProducts = Array.isArray(data) ? data : [];
+  const pagination = payload?.pagination || {};
+  const total = Number(pagination.total);
+
+  currentPage = Number(pagination.page) || page;
+  pageLimit = Number(pagination.limit) || pageLimit;
+  if (!Number.isNaN(Number(pagination.totalPages))) {
+    totalPages = Number(pagination.totalPages) || 1;
+  } else if (!Number.isNaN(total) && total >= 0) {
+    totalPages = Math.max(1, Math.ceil(total / pageLimit));
+  } else {
+    totalPages = 1;
+  }
+
+  lastQueryKey = queryKey;
 
   renderProductsTable(currentProducts);
+  renderPagination();
   setStatus("");
 }
 
@@ -291,6 +423,10 @@ function selectProduct(product) {
   const id = getId(product);
 
   el("editProduct").style.display = "grid";
+  const deleteButton = el("deleteProduct");
+  if (deleteButton) {
+    deleteButton.disabled = false;
+  }
   el("prodName").innerText = product.name || "-";
   el("prodId").innerText = id ? ("(id: " + id + ")") : "(id yok)";
 
@@ -312,15 +448,24 @@ async function handleDeleteProduct(product) {
   const ok = confirm("Bu ürünü silmek istediğinize emin misiniz?");
   if (!ok) return;
 
-  const res = await fetch("/admin/api/products/" + id, {
-    method: "DELETE",
-    headers: authHeaders()
-  });
+  let res;
+  try {
+    res = await fetch("/admin/api/products/" + id, {
+      method: "DELETE",
+      headers: authHeaders()
+    });
+  } catch (error) {
+    console.error("Ürün silme isteği ağ hatası:", error);
+    setStatus("Silme sırasında hata oluştu");
+    return;
+  }
 
   if (handleUnauthorized(res)) return;
 
   const payload = await safeJson(res);
   if (!res.ok) {
+    console.error("Ürün silme başarısız:", res.status, payload);
+    setStatus("Silme başarısız");
     alert("Silme başarısız: " + (payload?.error || res.statusText));
     return;
   }
@@ -334,10 +479,23 @@ async function handleDeleteProduct(product) {
 
   renderProductsTable(currentProducts);
   setStatus("Ürün silindi");
+
+  const nextPage = currentProducts.length === 0 && currentPage > 1
+    ? currentPage - 1
+    : currentPage;
+  await loadProducts(nextPage);
 }
 
 // ---------- Events ----------
-el("categoryFilter")?.addEventListener("change", loadProducts);
+el("categoryFilter")?.addEventListener("change", () => loadProducts(1));
+const searchFilterInput = el("productSearch") || el("searchInput");
+if (searchFilterInput) {
+  searchFilterInput.addEventListener("input", () => loadProducts(1));
+}
+const isActiveFilterEl = el("isActiveFilter");
+if (isActiveFilterEl) {
+  isActiveFilterEl.addEventListener("change", () => loadProducts(1));
+}
 
 el("addProduct")?.addEventListener("submit", async function(event) {
   event.preventDefault();
@@ -380,7 +538,7 @@ el("addProduct")?.addEventListener("submit", async function(event) {
 
   formEl.reset();
   fillCategorySelect(el("addProductCategorySelect"), cachedCategories, []);
-  await loadProducts();
+  await loadProducts(currentPage);
 });
 
 el("editProduct")?.addEventListener("submit", async function(event) {
@@ -426,7 +584,7 @@ el("editProduct")?.addEventListener("submit", async function(event) {
     return;
   }
 
-  await loadProducts();
+  await loadProducts(currentPage);
 });
 
 el("deleteProduct")?.addEventListener("click", async function() {
@@ -435,8 +593,12 @@ el("deleteProduct")?.addEventListener("click", async function() {
 });
 
 async function init() {
+  const deleteButton = el("deleteProduct");
+  if (deleteButton) {
+    deleteButton.disabled = true;
+  }
   await loadCategories();
-  await loadProducts();
+  await loadProducts(1);
 }
 
 // DOM hazır olmadan çalışmasın
