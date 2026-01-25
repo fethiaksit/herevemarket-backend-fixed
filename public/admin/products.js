@@ -1,6 +1,8 @@
 requireAuth();
 
 let selectedProduct = null;
+let cachedCategories = [];
+const isDev = ["localhost", "127.0.0.1"].includes(window.location.hostname);
 
 // ---------- Helpers ----------
 function el(id) { return document.getElementById(id); }
@@ -10,14 +12,27 @@ function setStatus(msg) {
   if (s) s.textContent = msg || "";
 }
 
+function setCategoryStatus(msg) {
+  const s = el("categoryStatus");
+  if (s) s.textContent = msg || "";
+}
+
 function fdLog(fd) {
   // debug için aç:
   // for (const [k,v] of fd.entries()) console.log(k, v);
 }
 
+function warnMissingSelect(select, label) {
+  if (!isDev) return;
+  console.warn(`[products] ${label} select bulunamadı veya <select> değil.`, select);
+}
+
 // Kategori option doldurucu
 function fillSelect(select, categories, placeholderHtml) {
-  if (!select) return;
+  if (!select || select.tagName !== "SELECT") {
+    warnMissingSelect(select, "Kategori");
+    return;
+  }
   select.innerHTML = placeholderHtml;
 
   if (!Array.isArray(categories)) return;
@@ -33,32 +48,128 @@ function fillSelect(select, categories, placeholderHtml) {
   });
 }
 
+function extractCategories(payload) {
+  const candidates = [
+    payload?.data?.data,
+    payload?.data?.categories,
+    payload?.data,
+    payload?.categories,
+    payload
+  ];
+
+  const found = candidates.find((item) => Array.isArray(item));
+  return found || [];
+}
+
+function getCategoryIdByName(name, categories) {
+  if (!name || !Array.isArray(categories)) return "";
+  const target = name.trim().toLowerCase();
+  const match = categories.find((cat) => {
+    const catName = (cat?.name || "").trim().toLowerCase();
+    return catName === target;
+  });
+
+  return match ? (getId(match) || match.id || match._id || "") : "";
+}
+
+function normalizeCategoryIds(product, categories) {
+  const ids = new Set();
+
+  const addId = (value) => {
+    if (!value) return;
+    ids.add(String(value));
+  };
+
+  const addFromArray = (arr) => {
+    arr.forEach((item) => {
+      if (!item) return;
+      if (typeof item === "string" || typeof item === "number") {
+        addId(item);
+        return;
+      }
+      if (typeof item === "object") {
+        const id = getId(item) || item.id || item._id;
+        if (id) {
+          addId(id);
+          return;
+        }
+        const nameId = getCategoryIdByName(item.name, categories);
+        if (nameId) addId(nameId);
+      }
+    });
+  };
+
+  if (Array.isArray(product.categoryIds)) addFromArray(product.categoryIds);
+
+  if (Array.isArray(product.category_id)) {
+    addFromArray(product.category_id);
+  } else if (product.category_id) {
+    addId(product.category_id);
+  }
+
+  if (Array.isArray(product.categories)) addFromArray(product.categories);
+
+  if (product.category && typeof product.category === "string") {
+    const nameMatch = getCategoryIdByName(product.category, categories);
+    if (nameMatch) addId(nameMatch);
+  } else if (product.category && typeof product.category === "object") {
+    const id = getId(product.category) || product.category.id || product.category._id;
+    if (id) {
+      addId(id);
+    } else {
+      const nameMatch = getCategoryIdByName(product.category.name, categories);
+      if (nameMatch) addId(nameMatch);
+    }
+  }
+
+  return [...ids];
+}
+
+function appendSelectedCategories(fd, select, label) {
+  if (!select || select.tagName !== "SELECT") {
+    warnMissingSelect(select, label);
+    return;
+  }
+
+  fd.delete("category_id");
+  [...select.selectedOptions].forEach((o) => {
+    if (o.value) fd.append("category_id", o.value);
+  });
+}
+
 async function fetchAdminCategories() {
   const res = await fetch("/admin/api/categories", { headers: authHeaders() });
   if (handleUnauthorized(res)) return [];
 
   const payload = await safeJson(res);
-  return (payload && payload.data) ? payload.data : (payload || []);
+  return extractCategories(payload);
 }
 
 async function loadCategoriesEverywhere() {
   const categories = await fetchAdminCategories();
+  cachedCategories = Array.isArray(categories) ? categories : [];
+
+  if (cachedCategories.length === 0) {
+    setCategoryStatus("Kategori bulunamadı.");
+  } else {
+    setCategoryStatus("");
+  }
 
   fillSelect(
     el("categoryFilter"),
-    categories,
+    cachedCategories,
     `<option value="">Tüm Kategoriler</option>`
   );
 
   fillSelect(
     el("addProductCategorySelect"),
-    categories,
-    `<option value="" disabled selected>Kategori Seç</option>`
+    cachedCategories,
+    `<option value="" disabled>Kategori Seç</option>`
   );
 
   fillSelect(
     el("editProductCategorySelect"),
-    categories,
+    cachedCategories,
     `<option value="">Kategori Seç</option>`
   );
 }
@@ -134,7 +245,7 @@ function selectProduct(product) {
     [...select.options].forEach(o => o.selected = false);
 
     // API’den gelebilecek formatlar: categoryIds (new), category (legacy names)
-    const ids = Array.isArray(product.categoryIds) ? product.categoryIds : [];
+    const ids = normalizeCategoryIds(product, cachedCategories);
 
     if (ids.length > 0) {
       // categoryIds ObjectID string olarak gelmeli
@@ -160,7 +271,9 @@ el("addProduct")?.addEventListener("submit", async (event) => {
   const form = event.target;
   const fd = new FormData(form);
 
-  // ✅ multiple seçimi yok ama name="category_id" var
+  // ✅ multiple seçimi name="category_id" ile gönder
+  appendSelectedCategories(fd, el("addProductCategorySelect"), "Yeni ürün");
+
   // checkbox değerleri backend parseBoolValue ile okunuyor
   // unchecked ise hiç gitmeyebilir, sorun değil.
   if (!fd.get("isActive")) {
@@ -204,13 +317,7 @@ el("editProduct")?.addEventListener("submit", async (event) => {
   const fd = new FormData(form);
 
   // ✅ multiple category: selected options -> category_id tekrar tekrar append edilmeli
-  const catSelect = el("editProductCategorySelect");
-  if (catSelect) {
-    fd.delete("category_id");
-    [...catSelect.selectedOptions].forEach(o => {
-      if (o.value) fd.append("category_id", o.value);
-    });
-  }
+  appendSelectedCategories(fd, el("editProductCategorySelect"), "Düzenle");
 
   fdLog(fd);
 
