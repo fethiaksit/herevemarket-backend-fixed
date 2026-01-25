@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"mime/multipart"
@@ -157,10 +158,28 @@ func parseMultipartProductRequest(c *gin.Context) (MultipartProductInput, error)
 
 func saveImage(file *multipart.FileHeader) (string, error) {
 	extension := strings.ToLower(filepath.Ext(file.Filename))
+	if extension == "" {
+		return "", fmt.Errorf("image file extension is required")
+	}
+	allowedExtensions := map[string]struct{}{
+		".jpg":  {},
+		".jpeg": {},
+		".png":  {},
+		".webp": {},
+	}
+	if _, ok := allowedExtensions[extension]; !ok {
+		return "", fmt.Errorf("unsupported image type: %s", extension)
+	}
+	const maxImageSize = 5 << 20
+	if file.Size > maxImageSize {
+		return "", fmt.Errorf("image file too large (max 5MB)")
+	}
+
 	filename := primitive.NewObjectID().Hex() + extension
 
-	dir := filepath.Join("public", "uploads", "products")
+	dir := "/home/ubuntu/herevemarket-backend/public/uploads/products"
 	if err := os.MkdirAll(dir, 0o755); err != nil {
+		log.Printf("saveImage: failed to create directory %s: %v", dir, err)
 		return "", err
 	}
 
@@ -168,17 +187,20 @@ func saveImage(file *multipart.FileHeader) (string, error) {
 
 	out, err := os.Create(fullPath)
 	if err != nil {
+		log.Printf("saveImage: failed to create file %s: %v", fullPath, err)
 		return "", err
 	}
 	defer out.Close()
 
 	in, err := file.Open()
 	if err != nil {
+		log.Printf("saveImage: failed to open upload %s: %v", file.Filename, err)
 		return "", err
 	}
 	defer in.Close()
 
 	if _, err := io.Copy(out, in); err != nil {
+		log.Printf("saveImage: failed to save file %s: %v", fullPath, err)
 		return "", err
 	}
 
@@ -201,5 +223,5 @@ func parseBoolValue(value string) (bool, error) {
 }
 
 func respondMultipartError(c *gin.Context, err error) {
-	c.JSON(http.StatusBadRequest, gin.H{"error": "invalid form data"})
+	c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 }
