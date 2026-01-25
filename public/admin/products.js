@@ -138,7 +138,7 @@ function appendSelectedCategories(fd, select, label) {
 }
 
 async function fetchAdminCategories() {
-  const res = await fetch("/admin/api/categories", { headers: authHeaders() });
+  const res = await fetch("/categories", { headers: authHeaders() });
   if (handleUnauthorized(res)) return [];
 
   const payload = await safeJson(res);
