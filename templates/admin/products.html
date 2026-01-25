@@ -27,6 +27,7 @@
     <select id="categoryFilter">
       <option value="">Tüm Kategoriler</option>
     </select>
+    <div id="categoryStatus" class="muted"></div>
   </section>
 
   <section class="grid-two">
@@ -37,8 +38,8 @@
         <input name="name" placeholder="Ürün adı" required>
 
         <label>Kategori</label>
-                  <input name="category_id" id="addProductCategorySelect" class="product-category-select"  required>
-          <option value="" disabled selected>Kategori Seç</option>
+        <select name="category_id" id="addProductCategorySelect" class="product-category-select" multiple required>
+          <option value="" disabled>Kategori Seç</option>
         </select>
 
         <label>Fiyat</label>
