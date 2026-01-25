@@ -126,10 +126,9 @@ async function safeJson(res) {
 
 // ---------- Categories ----------
 async function fetchCategoriesPublic() {
-  // ✅ Public endpoint: token istemez.
-  // Eğer aynı origin'den proxy yoksa, full URL kullan:
-  // const url = "https://api.herevemarket.com/categories";
-  const url = "/categories";
+  const url = isDev
+    ? "/categories" // dev'de aynı origin proxy varsa
+    : "https://api.herevemarket.com/categories"; // prod kesin
 
   try {
     const res = await fetch(url, { cache: "no-store" });
@@ -140,8 +139,7 @@ async function fetchCategoriesPublic() {
       return [];
     }
 
-    const data = parseCategoriesPayload(payload);
-    return data;
+    return parseCategoriesPayload(payload);
   } catch (error) {
     console.error("Kategori isteği hata verdi:", error);
     return [];
@@ -409,8 +407,10 @@ el("deleteProduct")?.addEventListener("click", async function() {
   await handleDeleteProduct(selectedProduct);
 });
 
-// ---------- Init ----------
-(async function init() {
-  await loadCategories();
-  await loadProducts();
-})();
+
+// DOM hazır olmadan çalışmasın
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", init);
+} else {
+  init();
+}
