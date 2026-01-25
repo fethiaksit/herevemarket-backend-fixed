@@ -365,7 +365,7 @@ el("addProduct")?.addEventListener("submit", async function(event) {
 
   const res = await fetch("/admin/api/products", {
     method: "POST",
-    headers: authHeaders(),
+    headers: authHeadersMultipart(),
     body: fd
   });
 
@@ -413,7 +413,7 @@ el("editProduct")?.addEventListener("submit", async function(event) {
 
   const res = await fetch("/admin/api/products/" + id, {
     method: "PUT",
-    headers: authHeaders(),
+    headers: authHeadersMultipart(),
     body: fd
   });
 
