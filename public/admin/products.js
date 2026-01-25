@@ -18,6 +18,24 @@ function setCategoryStatus(msg) {
   if (s) s.textContent = msg || "";
 }
 
+function getCategoryId(category) {
+  if (!category) return null;
+  return category._id || category.id || null;
+}
+
+function parseCategoriesPayload(payload) {
+  const data = Array.isArray(payload)
+    ? payload
+    : (payload && payload.data) ? payload.data : [];
+
+  if (!Array.isArray(data)) {
+    console.error("Kategori payload beklenmeyen formatta:", payload);
+    return [];
+  }
+
+  return data;
+}
+
 function normalizeCategoryValues(values) {
   if (Array.isArray(values)) return values.filter(Boolean);
   if (typeof values === "string" && values) return [values];
@@ -35,10 +53,21 @@ function fillCategorySelect(selectEl, categories, selectedValues) {
   if (!selectEl || selectEl.tagName !== "SELECT") return;
 
   const preserved = Array.isArray(selectedValues) ? selectedValues : [];
+  const preservedSet = new Set(preserved);
   const activeCategories = (categories || []).filter(c => c && c.isActive !== false);
 
   selectEl.innerHTML = "";
   selectEl.multiple = true;
+
+  if (activeCategories.length === 0) {
+    const empty = document.createElement("option");
+    empty.value = "";
+    empty.textContent = "Kategori bulunamadı";
+    empty.disabled = true;
+    empty.selected = true;
+    selectEl.appendChild(empty);
+    return;
+  }
 
   const def = document.createElement("option");
   def.value = "";
@@ -48,27 +77,37 @@ function fillCategorySelect(selectEl, categories, selectedValues) {
   selectEl.appendChild(def);
 
   activeCategories.forEach(cat => {
+    const id = getCategoryId(cat);
+    if (!id) {
+      console.warn("Kategori id bulunamadı:", cat);
+      return;
+    }
     const opt = document.createElement("option");
-    opt.value = cat.name;     // ✅ eski sistem: kategori adı
+    opt.value = id;
     opt.textContent = cat.name;
+    if (preservedSet.has(id) || preservedSet.has(cat.name)) {
+      opt.selected = true;
+    }
     selectEl.appendChild(opt);
-  });
-
-  const activeNames = new Set(activeCategories.map(c => c.name));
-  preserved.forEach(val => {
-    if (!activeNames.has(val)) return;
-    const opt = Array.from(selectEl.options).find(o => o.value === val);
-    if (opt) opt.selected = true;
   });
 }
 
 async function fetchCategoriesPublic() {
-  const res = await fetch("/admin/api/categories");
-  if (handleUnauthorized(res)) return [];
+  try {
+    const res = await fetch("/admin/api/categories", { headers: authHeaders() });
+    if (handleUnauthorized(res)) return [];
 
-  const payload = await safeJson(res);
-  const data = (payload && payload.data) ? payload.data : (payload || []);
-  return Array.isArray(data) ? data : [];
+    const payload = await safeJson(res);
+    if (!res.ok) {
+      console.error("Kategori isteği başarısız:", res.status, payload);
+      return [];
+    }
+
+    return parseCategoriesPayload(payload);
+  } catch (error) {
+    console.error("Kategori isteği hata verdi:", error);
+    return [];
+  }
 }
 
 async function loadCategories() {
@@ -76,6 +115,7 @@ async function loadCategories() {
 
   if (!cachedCategories.length) {
     setCategoryStatus("Kategori bulunamadı. ( /categories boş dönüyor olabilir )");
+    console.warn("Kategori listesi boş döndü.");
   } else {
     setCategoryStatus("");
   }
@@ -91,14 +131,27 @@ async function loadCategories() {
     def.textContent = "Tüm Kategoriler";
     filterSelect.appendChild(def);
 
+    if (cachedCategories.length === 0) {
+      const empty = document.createElement("option");
+      empty.value = "";
+      empty.textContent = "Kategori bulunamadı";
+      empty.disabled = true;
+      filterSelect.appendChild(empty);
+    }
+
     cachedCategories.forEach(cat => {
+      const id = getCategoryId(cat);
+      if (!id) {
+        console.warn("Kategori id bulunamadı:", cat);
+        return;
+      }
       const opt = document.createElement("option");
-      opt.value = cat.name;
+      opt.value = id;
       opt.textContent = cat.name;
       filterSelect.appendChild(opt);
     });
 
-    const exists = cachedCategories.some(cat => cat.name === preserved);
+    const exists = cachedCategories.some(cat => getCategoryId(cat) === preserved);
     filterSelect.value = exists ? preserved : "";
   }
 
@@ -136,8 +189,15 @@ async function loadProducts() {
   const selected = el("categoryFilter")?.value || "";
   let url = "/admin/api/products";
 
-  // ✅ eski sistem: category=NAME
-  if (selected) url += "?" + new URLSearchParams({ category: selected }).toString();
+  // ✅ backend: category=NAME, frontend: select value=id
+  if (selected) {
+    const matched = cachedCategories.find(cat => getCategoryId(cat) === selected);
+    if (matched?.name) {
+      url += "?" + new URLSearchParams({ category: matched.name }).toString();
+    } else {
+      console.warn("Kategori filtresi id eşleşmedi:", selected);
+    }
+  }
 
   setStatus("Ürünler yükleniyor...");
 
@@ -221,12 +281,12 @@ el("addProduct")?.addEventListener("submit", async function(event) {
   const price = parseFloat(fd.get("price"));
   if (Number.isNaN(price)) return alert("Fiyat sayı olmalı (örn 24.90)");
 
-  const categories = getSelectedCategories(formEl.querySelector('select[name="category"]'));
+  const categories = getSelectedCategories(formEl.querySelector('select[name="category_id"]'));
   if (categories.length === 0) return alert("En az bir kategori seç");
 
   // select multiple -> aynı field name'i tekrar tekrar append et
-  fd.delete("category");
-  categories.forEach(c => fd.append("category", c));
+  fd.delete("category_id");
+  categories.forEach(c => fd.append("category_id", c));
 
   // Backend price'ı string okuyorsa sorun değil; ama istersek normalize edelim:
   fd.set("price", String(price));
@@ -268,11 +328,11 @@ el("editProduct")?.addEventListener("submit", async function(event) {
   const price = parseFloat(fd.get("price"));
   if (Number.isNaN(price)) return alert("Fiyat sayı olmalı");
 
-  const categories = getSelectedCategories(formEl.querySelector('select[name="category"]'));
+  const categories = getSelectedCategories(formEl.querySelector('select[name="category_id"]'));
   if (categories.length === 0) return alert("En az bir kategori seç");
 
-  fd.delete("category");
-  categories.forEach(c => fd.append("category", c));
+  fd.delete("category_id");
+  categories.forEach(c => fd.append("category_id", c));
   fd.set("price", String(price));
 
   // checkbox unchecked -> FormData'da hiç olmayabilir, backend default bekleyebilir.
