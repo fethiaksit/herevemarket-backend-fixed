@@ -94,7 +94,7 @@ function fillCategorySelect(selectEl, categories, selectedValues) {
 
 async function fetchCategoriesPublic() {
   try {
-    const res = await fetch("/admin/api/categories", { headers: authHeaders() });
+    const res = await fetch("/categories", { headers: authHeaders() });
     if (handleUnauthorized(res)) return [];
 
     const payload = await safeJson(res);
