@@ -1,6 +1,7 @@
 requireAuth();
 
 let selectedProduct = null;
+let currentProducts = [];
 let cachedCategories = [];
 const isDev = ["localhost", "127.0.0.1"].includes(window.location.hostname);
 
@@ -17,336 +18,172 @@ function setCategoryStatus(msg) {
   if (s) s.textContent = msg || "";
 }
 
-function fdLog(fd) {
-  // debug için aç:
-  // for (const [k,v] of fd.entries()) console.log(k, v);
+function normalizeCategoryValues(values) {
+  if (Array.isArray(values)) return values.filter(Boolean);
+  if (typeof values === "string" && values) return [values];
+  return [];
 }
 
-function warnMissingSelect(select, label) {
-  if (!isDev) return;
-  console.warn(`[products] ${label} select bulunamadı veya <select> değil.`, select);
+function getSelectedCategories(selectEl) {
+  if (!selectEl) return [];
+  return Array.from(selectEl.selectedOptions || [])
+    .map(opt => opt.value)
+    .filter(Boolean);
 }
 
-// Kategori option doldurucu
-function fillSelect(select, categories, placeholderHtml) {
-  if (!select || select.tagName !== "SELECT") {
-    warnMissingSelect(select, "Kategori");
-    return;
-  }
-  select.innerHTML = placeholderHtml;
+function fillCategorySelect(selectEl, categories, selectedValues) {
+  if (!selectEl || selectEl.tagName !== "SELECT") return;
 
-  if (!Array.isArray(categories)) return;
+  const preserved = Array.isArray(selectedValues) ? selectedValues : [];
+  const activeCategories = (categories || []).filter(c => c && c.isActive !== false);
 
-  categories.forEach((cat) => {
-    const id = getId(cat) || cat.id || cat._id; // admin.js helper varsa getId kullan
-    if (!id) return;
+  selectEl.innerHTML = "";
+  selectEl.multiple = true;
 
+  const def = document.createElement("option");
+  def.value = "";
+  def.textContent = "Kategori Seç";
+  def.disabled = true;
+  if (preserved.length === 0) def.selected = true;
+  selectEl.appendChild(def);
+
+  activeCategories.forEach(cat => {
     const opt = document.createElement("option");
-    opt.value = id;                 
-    opt.textContent = cat.name || "-";
-    select.appendChild(opt);
+    opt.value = cat.name;     // ✅ eski sistem: kategori adı
+    opt.textContent = cat.name;
+    selectEl.appendChild(opt);
+  });
+
+  const activeNames = new Set(activeCategories.map(c => c.name));
+  preserved.forEach(val => {
+    if (!activeNames.has(val)) return;
+    const opt = Array.from(selectEl.options).find(o => o.value === val);
+    if (opt) opt.selected = true;
   });
 }
 
-function extractCategories(payload) {
-  const candidates = [
-    payload?.data?.data,
-    payload?.data?.categories,
-    payload?.data,
-    payload?.categories,
-    payload
-  ];
-
-  const found = candidates.find((item) => Array.isArray(item));
-  return found || [];
-}
-
-function getCategoryIdByName(name, categories) {
-  if (!name || !Array.isArray(categories)) return "";
-  const target = name.trim().toLowerCase();
-  const match = categories.find((cat) => {
-    const catName = (cat?.name || "").trim().toLowerCase();
-    return catName === target;
-  });
-
-  return match ? (getId(match) || match.id || match._id || "") : "";
-}
-
-function normalizeCategoryIds(product, categories) {
-  const ids = new Set();
-
-  const addId = (value) => {
-    if (!value) return;
-    ids.add(String(value));
-  };
-
-  const addFromArray = (arr) => {
-    arr.forEach((item) => {
-      if (!item) return;
-      if (typeof item === "string" || typeof item === "number") {
-        addId(item);
-        return;
-      }
-      if (typeof item === "object") {
-        const id = getId(item) || item.id || item._id;
-        if (id) {
-          addId(id);
-          return;
-        }
-        const nameId = getCategoryIdByName(item.name, categories);
-        if (nameId) addId(nameId);
-      }
-    });
-  };
-
-  if (Array.isArray(product.categoryIds)) addFromArray(product.categoryIds);
-
-  if (Array.isArray(product.category_id)) {
-    addFromArray(product.category_id);
-  } else if (product.category_id) {
-    addId(product.category_id);
-  }
-
-  if (Array.isArray(product.categories)) addFromArray(product.categories);
-
-  if (product.category && typeof product.category === "string") {
-    const nameMatch = getCategoryIdByName(product.category, categories);
-    if (nameMatch) addId(nameMatch);
-  } else if (product.category && typeof product.category === "object") {
-    const id = getId(product.category) || product.category.id || product.category._id;
-    if (id) {
-      addId(id);
-    } else {
-      const nameMatch = getCategoryIdByName(product.category.name, categories);
-      if (nameMatch) addId(nameMatch);
-    }
-  }
-
-  return [...ids];
-}
-
-function appendSelectedCategories(fd, select, label) {
-  if (!select || select.tagName !== "SELECT") {
-    warnMissingSelect(select, label);
-    return;
-  }
-
-  fd.delete("category_id");
-  [...select.selectedOptions].forEach((o) => {
-    if (o.value) fd.append("category_id", o.value);
-  });
-}
-
-async function fetchAdminCategories() {
-  const res = await fetch("/admin/categories", { headers: authHeaders() });
+async function fetchCategoriesPublic() {
+  const res = await fetch("/categories");
   if (handleUnauthorized(res)) return [];
 
   const payload = await safeJson(res);
-  return extractCategories(payload);
+  const data = (payload && payload.data) ? payload.data : (payload || []);
+  return Array.isArray(data) ? data : [];
 }
 
-async function loadCategoriesEverywhere() {
-  const categories = await fetchAdminCategories();
-  cachedCategories = Array.isArray(categories) ? categories : [];
+async function loadCategories() {
+  cachedCategories = await fetchCategoriesPublic();
 
-  if (cachedCategories.length === 0) {
-    setCategoryStatus("Kategori bulunamadı.");
+  if (!cachedCategories.length) {
+    setCategoryStatus("Kategori bulunamadı. ( /categories boş dönüyor olabilir )");
   } else {
     setCategoryStatus("");
   }
 
-  fillSelect(
-    el("categoryFilter"),
-    cachedCategories,
-    `<option value="">Tüm Kategoriler</option>`
-  );
+  // Filter
+  const filterSelect = el("categoryFilter");
+  if (filterSelect && filterSelect.tagName === "SELECT") {
+    const preserved = filterSelect.value || "";
 
-  fillSelect(
-    el("addProductCategorySelect"),
-    cachedCategories,
-    `<option value="" disabled>Kategori Seç</option>`
-  );
+    filterSelect.innerHTML = "";
+    const def = document.createElement("option");
+    def.value = "";
+    def.textContent = "Tüm Kategoriler";
+    filterSelect.appendChild(def);
 
-  fillSelect(
-    el("editProductCategorySelect"),
-    cachedCategories,
-    `<option value="">Kategori Seç</option>`
-  );
-}
+    cachedCategories.forEach(cat => {
+      const opt = document.createElement("option");
+      opt.value = cat.name;
+      opt.textContent = cat.name;
+      filterSelect.appendChild(opt);
+    });
 
-// ---------- Products (basic) ----------
-async function fetchProducts(params = {}) {
-  const url = new URL("/admin/api/products", window.location.origin);
-
-  // pagination varsayılanları (istersen değiştir)
-  if (params.page) url.searchParams.set("page", params.page);
-  if (params.limit) url.searchParams.set("limit", params.limit);
-
-  // Yeni doğru filtre: categoryId
-  if (params.categoryId) url.searchParams.set("categoryId", params.categoryId);
-
-  const res = await fetch(url.toString(), { headers: authHeaders() });
-  if (handleUnauthorized(res)) return null;
-
-  return await safeJson(res);
-}
-
-function renderProductsTable(payload) {
-  const tbody = document.querySelector("#productList tbody");
-  if (!tbody) return;
-
-  tbody.innerHTML = "";
-
-  const data = payload && payload.data ? payload.data : (payload || []);
-  if (!Array.isArray(data) || data.length === 0) {
-    setStatus("Ürün yok");
-    return;
+    const exists = cachedCategories.some(cat => cat.name === preserved);
+    filterSelect.value = exists ? preserved : "";
   }
 
-  setStatus("");
+  // Add/Edit selects
+  fillCategorySelect(el("addProductCategorySelect"), cachedCategories, []);
+  fillCategorySelect(el("editProductCategorySelect"), cachedCategories, []);
+}
+
+// ---------- Products ----------
+function renderProductsTable(data) {
+  const tbody = document.querySelector("#productList tbody");
+  if (!tbody) return;
+  tbody.innerHTML = "";
+
+  if (!Array.isArray(data) || data.length === 0) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td class="muted" colspan="3">Ürün yok</td>`;
+    tbody.appendChild(tr);
+    return;
+  }
 
   data.forEach((p) => {
     const tr = document.createElement("tr");
     tr.innerHTML = `
       <td>${p.name || "-"}</td>
-      <td>${p.brand || "-"}</td>
-      <td>${p.barcode || "-"}</td>
-      <td>${(p.stock ?? "-")}</td>
       <td>${p.isCampaign ? "Evet" : "Hayır"}</td>
       <td><button type="button" class="small">Düzenle</button></td>
     `;
-
     tr.querySelector("button").onclick = () => selectProduct(p);
     tbody.appendChild(tr);
   });
 }
 
+async function loadProducts() {
+  const selected = el("categoryFilter")?.value || "";
+  let url = "/admin/api/products";
+
+  // ✅ eski sistem: category=NAME
+  if (selected) url += "?" + new URLSearchParams({ category: selected }).toString();
+
+  setStatus("Ürünler yükleniyor...");
+
+  const res = await fetch(url, { headers: authHeaders() });
+  if (handleUnauthorized(res)) return;
+
+  const payload = await safeJson(res);
+  if (!res.ok) {
+    setStatus("Hata: ürünler getirilemedi");
+    return;
+  }
+
+  const data = (payload && payload.data) ? payload.data : (payload || []);
+  currentProducts = Array.isArray(data) ? data : [];
+
+  renderProductsTable(currentProducts);
+  setStatus("");
+}
+
 function selectProduct(product) {
   selectedProduct = product;
+  const id = getId(product);
 
   el("editProduct").style.display = "grid";
   el("prodName").innerText = product.name || "-";
-  el("prodId").innerText = product.id || product._id ? `(id: ${(product.id || product._id)})` : "";
+  el("prodId").innerText = id ? ("(id: " + id + ")") : "(id yok)";
 
   const form = el("editProduct");
   form.elements.name.value = product.name || "";
-  form.elements.price.value = product.price ?? "";
-  form.elements.brand.value = product.brand || "";
-  form.elements.barcode.value = product.barcode || "";
-  form.elements.stock.value = product.stock ?? "";
-  form.elements.description.value = product.description || "";
-  form.elements.isCampaign.checked = !!product.isCampaign;
-  form.elements.isActive.checked = product.isActive !== false;
+  form.elements.price.value = (product.price ?? "");
+  form.elements.isActive.checked = !!product.isActive;
 
-  // kategori seçimini doldur (categoryIds varsa onu seç)
-  const select = el("editProductCategorySelect");
-  if (select) {
-    // önce hepsini kaldır
-    [...select.options].forEach(o => o.selected = false);
+  // Ürün kategorileri (isim listesi)
+  const selectedCategories = normalizeCategoryValues(product.category);
+  fillCategorySelect(el("editProductCategorySelect"), cachedCategories, selectedCategories);
 
-    // API’den gelebilecek formatlar: categoryIds (new), category (legacy names)
-    const ids = normalizeCategoryIds(product, cachedCategories);
-
-    if (ids.length > 0) {
-      // categoryIds ObjectID string olarak gelmeli
-      ids.forEach((id) => {
-        const opt = [...select.options].find(o => o.value === id);
-        if (opt) opt.selected = true;
-      });
-    }
-  }
+  // file input güvenlik nedeniyle value set edilemez; boş kalır.
 }
 
-async function refreshProducts() {
-  const categoryId = el("categoryFilter")?.value || "";
-  const payload = await fetchProducts({ page: 1, limit: 20, categoryId: categoryId || "" });
-  if (!payload) return;
-  renderProductsTable(payload);
-}
+async function handleDeleteProduct(product) {
+  if (!product) return;
+  const id = getId(product);
+  if (!id) return alert("Ürün id yok");
 
-// ---------- Create ----------
-el("addProduct")?.addEventListener("submit", async (event) => {
-  event.preventDefault();
-
-  const form = event.target;
-  const fd = new FormData(form);
-
-  // ✅ multiple seçimi name="category_id" ile gönder
-  appendSelectedCategories(fd, el("addProductCategorySelect"), "Yeni ürün");
-
-  // checkbox değerleri backend parseBoolValue ile okunuyor
-  // unchecked ise hiç gitmeyebilir, sorun değil.
-  if (!fd.get("isActive")) {
-    // isActive checkbox unchecked ise backend default true yapıyorsa sorun değil,
-    // ama tutarlı olsun diye gönderelim:
-    // fd.set("isActive", "false"); // istersen aç
-  }
-
-  fdLog(fd);
-
-  const res = await fetch("/admin/api/products", {
-    method: "POST",
-    headers: authHeadersMultipart(),
-    body: fd
-  });
-
-  if (handleUnauthorized(res)) return;
-
-  const payload = await safeJson(res);
-  if (!res.ok) {
-    alert(payload && payload.error ? payload.error : "Ürün eklenemedi");
-    return;
-  }
-
-  form.reset();
-  await refreshProducts();
-});
-
-// ---------- Update ----------
-el("editProduct")?.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  if (!selectedProduct) return;
-
-  const id = selectedProduct.id || selectedProduct._id;
-  if (!id) {
-    alert("Ürün id yok");
-    return;
-  }
-
-  const form = event.target;
-  const fd = new FormData(form);
-
-  // ✅ multiple category: selected options -> category_id tekrar tekrar append edilmeli
-  appendSelectedCategories(fd, el("editProductCategorySelect"), "Düzenle");
-
-  fdLog(fd);
-
-  const res = await fetch("/admin/api/products/" + id, {
-    method: "PUT",
-    headers: authHeadersMultipart(),
-    body: fd
-  });
-
-  if (handleUnauthorized(res)) return;
-
-  const payload = await safeJson(res);
-  if (!res.ok) {
-    alert(payload && payload.error ? payload.error : "Ürün güncellenemedi");
-    return;
-  }
-
-  await refreshProducts();
-});
-
-// ---------- Delete (soft) ----------
-el("deleteProduct")?.addEventListener("click", async () => {
-  if (!selectedProduct) return;
-
-  const id = selectedProduct.id || selectedProduct._id;
-  if (!id) {
-    alert("Ürün id yok");
-    return;
-  }
+  const ok = confirm("Bu ürünü silmek istediğinize emin misiniz?");
+  if (!ok) return;
 
   const res = await fetch("/admin/api/products/" + id, {
     method: "DELETE",
@@ -355,24 +192,117 @@ el("deleteProduct")?.addEventListener("click", async () => {
 
   if (handleUnauthorized(res)) return;
 
+  const payload = await safeJson(res);
   if (!res.ok) {
-    const payload = await safeJson(res);
-    alert(payload && payload.error ? payload.error : "Ürün silinemedi");
+    alert("Silme başarısız: " + (payload?.error || res.statusText));
     return;
   }
 
-  selectedProduct = null;
-  el("editProduct").style.display = "none";
-  await refreshProducts();
+  currentProducts = currentProducts.filter(item => getId(item) !== id);
+
+  if (selectedProduct && getId(selectedProduct) === id) {
+    selectedProduct = null;
+    el("editProduct").style.display = "none";
+  }
+
+  renderProductsTable(currentProducts);
+  setStatus("Ürün silindi");
+}
+
+// ---------- Events ----------
+el("categoryFilter")?.addEventListener("change", loadProducts);
+
+el("addProduct")?.addEventListener("submit", async function(event) {
+  event.preventDefault();
+
+  const formEl = event.target;
+  const fd = new FormData(formEl);
+
+  const price = parseFloat(fd.get("price"));
+  if (Number.isNaN(price)) return alert("Fiyat sayı olmalı (örn 24.90)");
+
+  const categories = getSelectedCategories(formEl.querySelector('select[name="category"]'));
+  if (categories.length === 0) return alert("En az bir kategori seç");
+
+  // select multiple -> aynı field name'i tekrar tekrar append et
+  fd.delete("category");
+  categories.forEach(c => fd.append("category", c));
+
+  // Backend price'ı string okuyorsa sorun değil; ama istersek normalize edelim:
+  fd.set("price", String(price));
+
+  // default isActive (backend default true ise sorun değil)
+  if (!fd.has("isActive")) {
+    // isActive checkbox yok; add formda yok zaten.
+  }
+
+  const res = await fetch("/admin/api/products", {
+    method: "POST",
+    headers: authHeaders(), // ✅ content-type ekleme
+    body: fd
+  });
+
+  if (handleUnauthorized(res)) return;
+
+  const payload = await safeJson(res);
+  if (!res.ok) {
+    alert(payload?.error || "Ürün eklenemedi");
+    return;
+  }
+
+  formEl.reset();
+  fillCategorySelect(el("addProductCategorySelect"), cachedCategories, []);
+  await loadProducts();
 });
 
-// ---------- Filter change ----------
-el("categoryFilter")?.addEventListener("change", async () => {
-  await refreshProducts();
+el("editProduct")?.addEventListener("submit", async function(event) {
+  event.preventDefault();
+  if (!selectedProduct) return;
+
+  const id = getId(selectedProduct);
+  if (!id) return alert("Ürün id yok");
+
+  const formEl = event.target;
+  const fd = new FormData(formEl);
+
+  const price = parseFloat(fd.get("price"));
+  if (Number.isNaN(price)) return alert("Fiyat sayı olmalı");
+
+  const categories = getSelectedCategories(formEl.querySelector('select[name="category"]'));
+  if (categories.length === 0) return alert("En az bir kategori seç");
+
+  fd.delete("category");
+  categories.forEach(c => fd.append("category", c));
+  fd.set("price", String(price));
+
+  // checkbox unchecked -> FormData'da hiç olmayabilir, backend default bekleyebilir.
+  // Biz netleştirelim:
+  fd.set("isActive", formEl.elements.isActive.checked ? "true" : "false");
+
+  const res = await fetch("/admin/api/products/" + id, {
+    method: "PUT",
+    headers: authHeaders(),
+    body: fd
+  });
+
+  if (handleUnauthorized(res)) return;
+
+  const payload = await safeJson(res);
+  if (!res.ok) {
+    alert(payload?.error || "Ürün güncellenemedi");
+    return;
+  }
+
+  await loadProducts();
+});
+
+el("deleteProduct")?.addEventListener("click", async function() {
+  if (!selectedProduct) return;
+  await handleDeleteProduct(selectedProduct);
 });
 
 // ---------- Init ----------
 (async function init() {
-  await loadCategoriesEverywhere();
-  await refreshProducts();
+  await loadCategories();
+  await loadProducts();
 })();
