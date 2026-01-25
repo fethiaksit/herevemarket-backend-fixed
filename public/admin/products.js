@@ -24,6 +24,7 @@ function getCategoryId(category) {
 }
 
 function parseCategoriesPayload(payload) {
+  // /categories -> array bekliyoruz ama tolerant dursun
   const data = Array.isArray(payload)
     ? payload
     : (payload && payload.data) ? payload.data : [];
@@ -32,7 +33,6 @@ function parseCategoriesPayload(payload) {
     console.error("Kategori payload beklenmeyen formatta:", payload);
     return [];
   }
-
   return data;
 }
 
@@ -49,11 +49,32 @@ function getSelectedCategories(selectEl) {
     .filter(Boolean);
 }
 
+function assertSelectExists(selectId, nameAttrExpected) {
+  const selectEl = el(selectId);
+  if (!selectEl) {
+    console.error(`[ADMIN PRODUCTS] Select bulunamadı: #${selectId}`);
+    return null;
+  }
+  if (selectEl.tagName !== "SELECT") {
+    console.error(`[ADMIN PRODUCTS] #${selectId} SELECT değil:`, selectEl);
+    return null;
+  }
+  if (nameAttrExpected && selectEl.getAttribute("name") !== nameAttrExpected) {
+    console.warn(
+      `[ADMIN PRODUCTS] #${selectId} name="${selectEl.getAttribute("name")}" beklenen "${nameAttrExpected}" değildi. ` +
+      `Form submit seçimlerinde querySelector('select[name="${nameAttrExpected}"]') kullandığın için bu önemli.`
+    );
+  }
+  return selectEl;
+}
+
 function fillCategorySelect(selectEl, categories, selectedValues) {
   if (!selectEl || selectEl.tagName !== "SELECT") return;
 
   const preserved = Array.isArray(selectedValues) ? selectedValues : [];
   const preservedSet = new Set(preserved);
+
+  // "Sadece aktif" istiyorsun => isActive false olanları at
   const activeCategories = (categories || []).filter(c => c && c.isActive !== false);
 
   selectEl.innerHTML = "";
@@ -83,27 +104,44 @@ function fillCategorySelect(selectEl, categories, selectedValues) {
       return;
     }
     const opt = document.createElement("option");
-    opt.value = id;
+    opt.value = id;          // ✅ value her zaman id
     opt.textContent = cat.name;
+
+    // preserved listesi ürünlerde eski sistemden name gelebilir; onu da seçilebilir tut
     if (preservedSet.has(id) || preservedSet.has(cat.name)) {
       opt.selected = true;
     }
+
     selectEl.appendChild(opt);
   });
 }
 
-async function fetchCategoriesPublic() {
+async function safeJson(res) {
   try {
-const res = await fetch("/categories");
-    if (handleUnauthorized(res)) return [];
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
 
+// ---------- Categories ----------
+async function fetchCategoriesPublic() {
+  // ✅ Public endpoint: token istemez.
+  // Eğer aynı origin'den proxy yoksa, full URL kullan:
+  // const url = "https://api.herevemarket.com/categories";
+  const url = "/categories";
+
+  try {
+    const res = await fetch(url, { cache: "no-store" });
     const payload = await safeJson(res);
+
     if (!res.ok) {
       console.error("Kategori isteği başarısız:", res.status, payload);
       return [];
     }
 
-    return parseCategoriesPayload(payload);
+    const data = parseCategoriesPayload(payload);
+    return data;
   } catch (error) {
     console.error("Kategori isteği hata verdi:", error);
     return [];
@@ -119,6 +157,8 @@ async function loadCategories() {
   } else {
     setCategoryStatus("");
   }
+
+  console.debug("[ADMIN PRODUCTS] categories loaded:", cachedCategories.length, cachedCategories[0]);
 
   // Filter
   const filterSelect = el("categoryFilter");
@@ -146,7 +186,7 @@ async function loadCategories() {
         return;
       }
       const opt = document.createElement("option");
-      opt.value = id;
+      opt.value = id;        // ✅ filtrede value=id
       opt.textContent = cat.name;
       filterSelect.appendChild(opt);
     });
@@ -156,8 +196,11 @@ async function loadCategories() {
   }
 
   // Add/Edit selects
-  fillCategorySelect(el("addProductCategorySelect"), cachedCategories, []);
-  fillCategorySelect(el("editProductCategorySelect"), cachedCategories, []);
+  const addSel = assertSelectExists("addProductCategorySelect", "category_id");
+  const editSel = assertSelectExists("editProductCategorySelect", "category_id");
+
+  fillCategorySelect(addSel, cachedCategories, []);
+  fillCategorySelect(editSel, cachedCategories, []);
 }
 
 // ---------- Products ----------
@@ -206,6 +249,7 @@ async function loadProducts() {
 
   const payload = await safeJson(res);
   if (!res.ok) {
+    console.error("Ürünler isteği başarısız:", res.status, payload);
     setStatus("Hata: ürünler getirilemedi");
     return;
   }
@@ -230,11 +274,9 @@ function selectProduct(product) {
   form.elements.price.value = (product.price ?? "");
   form.elements.isActive.checked = !!product.isActive;
 
-  // Ürün kategorileri (isim listesi)
+  // Ürün kategorileri (legacy: isim listesi olabilir)
   const selectedCategories = normalizeCategoryValues(product.category);
   fillCategorySelect(el("editProductCategorySelect"), cachedCategories, selectedCategories);
-
-  // file input güvenlik nedeniyle value set edilemez; boş kalır.
 }
 
 async function handleDeleteProduct(product) {
@@ -281,24 +323,24 @@ el("addProduct")?.addEventListener("submit", async function(event) {
   const price = parseFloat(fd.get("price"));
   if (Number.isNaN(price)) return alert("Fiyat sayı olmalı (örn 24.90)");
 
-  const categories = getSelectedCategories(formEl.querySelector('select[name="category_id"]'));
+  const categorySelect = formEl.querySelector('select[name="category_id"]');
+  if (!categorySelect) {
+    console.error('Add form içinde select[name="category_id"] bulunamadı. HTML name yanlış.');
+    return alert("Kategori alanı bulunamadı (HTML name='category_id' olmalı).");
+  }
+
+  const categories = getSelectedCategories(categorySelect);
   if (categories.length === 0) return alert("En az bir kategori seç");
 
   // select multiple -> aynı field name'i tekrar tekrar append et
   fd.delete("category_id");
-  categories.forEach(c => fd.append("category_id", c));
+  categories.forEach(c => fd.append("category_id", c)); // ✅ id gönder
 
-  // Backend price'ı string okuyorsa sorun değil; ama istersek normalize edelim:
   fd.set("price", String(price));
-
-  // default isActive (backend default true ise sorun değil)
-  if (!fd.has("isActive")) {
-    // isActive checkbox yok; add formda yok zaten.
-  }
 
   const res = await fetch("/admin/api/products", {
     method: "POST",
-    headers: authHeaders(), // ✅ content-type ekleme
+    headers: authHeaders(),
     body: fd
   });
 
@@ -306,6 +348,7 @@ el("addProduct")?.addEventListener("submit", async function(event) {
 
   const payload = await safeJson(res);
   if (!res.ok) {
+    console.error("Ürün ekleme başarısız:", res.status, payload);
     alert(payload?.error || "Ürün eklenemedi");
     return;
   }
@@ -328,15 +371,19 @@ el("editProduct")?.addEventListener("submit", async function(event) {
   const price = parseFloat(fd.get("price"));
   if (Number.isNaN(price)) return alert("Fiyat sayı olmalı");
 
-  const categories = getSelectedCategories(formEl.querySelector('select[name="category_id"]'));
+  const categorySelect = formEl.querySelector('select[name="category_id"]');
+  if (!categorySelect) {
+    console.error('Edit form içinde select[name="category_id"] bulunamadı. HTML name yanlış.');
+    return alert("Kategori alanı bulunamadı (HTML name='category_id' olmalı).");
+  }
+
+  const categories = getSelectedCategories(categorySelect);
   if (categories.length === 0) return alert("En az bir kategori seç");
 
   fd.delete("category_id");
-  categories.forEach(c => fd.append("category_id", c));
+  categories.forEach(c => fd.append("category_id", c)); // ✅ id gönder
   fd.set("price", String(price));
 
-  // checkbox unchecked -> FormData'da hiç olmayabilir, backend default bekleyebilir.
-  // Biz netleştirelim:
   fd.set("isActive", formEl.elements.isActive.checked ? "true" : "false");
 
   const res = await fetch("/admin/api/products/" + id, {
@@ -349,6 +396,7 @@ el("editProduct")?.addEventListener("submit", async function(event) {
 
   const payload = await safeJson(res);
   if (!res.ok) {
+    console.error("Ürün güncelleme başarısız:", res.status, payload);
     alert(payload?.error || "Ürün güncellenemedi");
     return;
   }
