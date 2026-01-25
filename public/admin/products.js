@@ -136,6 +136,14 @@ async function fetchCategoriesPublic() {
 
     if (!res.ok) {
       console.error("Kategori isteği başarısız:", res.status, payload);
+      try {
+        const rawBody = await res.text();
+        if (rawBody) {
+          console.error("Kategori isteği ham cevap:", rawBody);
+        }
+      } catch (error) {
+        console.error("Kategori isteği ham cevap okunamadı:", error);
+      }
       return [];
     }
 
@@ -196,9 +204,28 @@ async function loadCategories() {
   // Add/Edit selects
   const addSel = assertSelectExists("addProductCategorySelect", "category_id");
   const editSel = assertSelectExists("editProductCategorySelect", "category_id");
+  const addSelectCount = document.querySelectorAll("#addProductCategorySelect").length;
+  if (addSelectCount > 1) {
+    console.error(`[ADMIN PRODUCTS] Duplicate id bulundu: #addProductCategorySelect (${addSelectCount})`);
+  }
 
   fillCategorySelect(addSel, cachedCategories, []);
   fillCategorySelect(editSel, cachedCategories, []);
+
+  if (cachedCategories.length > 0 && addSel) {
+    const expectedMinOptions = 2; // placeholder + en az 1 kategori
+    if (addSel.options.length < expectedMinOptions) {
+      console.error(
+        "[ADMIN PRODUCTS] Kategori select doldurulamadı.",
+        {
+          selectId: "addProductCategorySelect",
+          selectHtml: addSel.outerHTML,
+          cachedCategoriesCount: cachedCategories.length,
+          sampleCategory: cachedCategories[0]
+        }
+      );
+    }
+  }
 }
 
 // ---------- Products ----------
@@ -338,7 +365,7 @@ el("addProduct")?.addEventListener("submit", async function(event) {
 
   const res = await fetch("/admin/api/products", {
     method: "POST",
-    headers: authHeaders(),
+    headers: authHeadersMultipart(),
     body: fd
   });
 
@@ -386,7 +413,7 @@ el("editProduct")?.addEventListener("submit", async function(event) {
 
   const res = await fetch("/admin/api/products/" + id, {
     method: "PUT",
-    headers: authHeaders(),
+    headers: authHeadersMultipart(),
     body: fd
   });
 
@@ -407,6 +434,10 @@ el("deleteProduct")?.addEventListener("click", async function() {
   await handleDeleteProduct(selectedProduct);
 });
 
+async function init() {
+  await loadCategories();
+  await loadProducts();
+}
 
 // DOM hazır olmadan çalışmasın
 if (document.readyState === "loading") {
@@ -415,6 +446,7 @@ if (document.readyState === "loading") {
   init();
 }
 window.__adminProducts = {
+  init,
   loadCategories,
   loadProducts,
   fetchCategoriesPublic,
