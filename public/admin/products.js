@@ -414,3 +414,12 @@ if (document.readyState === "loading") {
 } else {
   init();
 }
+window.__adminProducts = {
+  loadCategories,
+  loadProducts,
+  fetchCategoriesPublic,
+  fillCategorySelect,
+  parseCategoriesPayload,
+  getCategoryId,
+  cachedCategories: () => cachedCategories
+};
