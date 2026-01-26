@@ -283,11 +283,6 @@ func CreateProduct(db *mongo.Database) gin.HandlerFunc {
 		res, err := db.Collection("products").InsertOne(context.Background(), product)
 		if err != nil {
 			log.Println("CreateProduct insert error:", err)
-			if mongo.IsDuplicateKeyError(err) {
-				log.Println("CreateProduct RETURN 409:", err)
-				c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
-				return
-			}
 			log.Println("CreateProduct RETURN 500:", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
@@ -402,11 +397,6 @@ func UpdateProduct(db *mongo.Database) gin.HandlerFunc {
 
 			if err != nil {
 				log.Println("UpdateProduct update error:", err)
-				if mongo.IsDuplicateKeyError(err) {
-					log.Println("UpdateProduct RETURN 409:", err)
-					c.JSON(http.StatusConflict, gin.H{"error": "barcode already exists"})
-					return
-				}
 				log.Println("UpdateProduct RETURN 500:", err)
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "db error"})
 				return
@@ -558,11 +548,6 @@ func UpdateProduct(db *mongo.Database) gin.HandlerFunc {
 
 		if err != nil {
 			log.Println("UpdateProduct update error:", err)
-			if mongo.IsDuplicateKeyError(err) {
-				log.Println("UpdateProduct RETURN 409:", err)
-				c.JSON(http.StatusConflict, gin.H{"error": "barcode already exists"})
-				return
-			}
 			log.Println("UpdateProduct RETURN 500:", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "db error"})
 			return
