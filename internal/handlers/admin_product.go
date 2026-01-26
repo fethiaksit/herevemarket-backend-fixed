@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -33,6 +34,7 @@ type ProductUpdateRequest struct {
 	Barcode     *string   `json:"barcode"`
 	Brand       *string   `json:"brand"`
 	Stock       *int      `json:"stock"`
+	InStock     *bool     `json:"inStock"`
 	IsActive    *bool     `json:"isActive"`
 	IsCampaign  *bool     `json:"isCampaign"`
 }
@@ -114,6 +116,26 @@ func resolveCategoryNamesByIDs(ctx context.Context, db *mongo.Database, ids []st
 	}
 
 	return names, nil
+}
+
+func sanitizeLogValue(value string, max int) string {
+	trimmed := strings.TrimSpace(value)
+	if max <= 0 {
+		max = 80
+	}
+	if len(trimmed) <= max {
+		return trimmed
+	}
+	return trimmed[:max] + "..."
+}
+
+func mapKeys(input map[string]interface{}) []string {
+	keys := make([]string, 0, len(input))
+	for key := range input {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 /* =======================
@@ -357,6 +379,13 @@ func UpdateProduct(db *mongo.Database) gin.HandlerFunc {
 			}
 
 			log.Printf("UpdateProduct image received: %t", input.ImageSet)
+			log.Printf(
+				"UpdateProduct form values: brand=%q barcode=%q stock=%d description=%q",
+				sanitizeLogValue(input.Brand, 80),
+				sanitizeLogValue(input.Barcode, 80),
+				input.Stock,
+				sanitizeLogValue(input.Description, 120),
+			)
 
 			var existingImagePath string
 			if input.ImageSet {
@@ -432,6 +461,8 @@ func UpdateProduct(db *mongo.Database) gin.HandlerFunc {
 				}
 				updateSet["stock"] = input.Stock
 				updateSet["inStock"] = input.Stock > 0
+			} else if input.InStockSet {
+				updateSet["inStock"] = input.InStock
 			}
 			if input.IsActiveSet {
 				updateSet["isActive"] = input.IsActive
@@ -439,6 +470,12 @@ func UpdateProduct(db *mongo.Database) gin.HandlerFunc {
 			if input.IsCampaignSet {
 				updateSet["isCampaign"] = input.IsCampaign
 			}
+
+			log.Printf(
+				"UpdateProduct update fields: set=%v unset=%v",
+				mapKeys(updateSet),
+				mapKeys(updateUnset),
+			)
 
 			if len(updateSet) == 0 && len(updateUnset) == 0 {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "no fields to update"})
@@ -587,6 +624,8 @@ func UpdateProduct(db *mongo.Database) gin.HandlerFunc {
 			}
 			updateSet["stock"] = *req.Stock
 			updateSet["inStock"] = *req.Stock > 0
+		} else if req.InStock != nil {
+			updateSet["inStock"] = *req.InStock
 		}
 		if req.IsActive != nil {
 			updateSet["isActive"] = *req.IsActive
@@ -594,6 +633,12 @@ func UpdateProduct(db *mongo.Database) gin.HandlerFunc {
 		if req.IsCampaign != nil {
 			updateSet["isCampaign"] = *req.IsCampaign
 		}
+
+		log.Printf(
+			"UpdateProduct update fields: set=%v unset=%v",
+			mapKeys(updateSet),
+			mapKeys(updateUnset),
+		)
 
 		if len(updateSet) == 0 && len(updateUnset) == 0 {
 			log.Println("UpdateProduct RETURN 400:", "no fields to update")
