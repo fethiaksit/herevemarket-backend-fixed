@@ -177,30 +177,31 @@ func saveImage(file *multipart.FileHeader) (string, error) {
 
 	filename := primitive.NewObjectID().Hex() + extension
 
-	dir := "/home/ubuntu/herevemarket-backend/public/uploads/products"
+	dir := "/app/public/uploads/products"
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		log.Printf("saveImage: failed to create directory %s: %v", dir, err)
+		log.Printf("[UPLOAD] saveImage: failed to create directory %s: %v", dir, err)
 		return "", err
 	}
 
 	fullPath := filepath.Join(dir, filename)
+	log.Printf("[UPLOAD] saveImage: filename=%s ext=%s fullPath=%s", filename, extension, fullPath)
 
 	out, err := os.Create(fullPath)
 	if err != nil {
-		log.Printf("saveImage: failed to create file %s: %v", fullPath, err)
+		log.Printf("[UPLOAD] saveImage: failed to create file %s: %v", fullPath, err)
 		return "", err
 	}
 	defer out.Close()
 
 	in, err := file.Open()
 	if err != nil {
-		log.Printf("saveImage: failed to open upload %s: %v", file.Filename, err)
+		log.Printf("[UPLOAD] saveImage: failed to open upload %s: %v", file.Filename, err)
 		return "", err
 	}
 	defer in.Close()
 
 	if _, err := io.Copy(out, in); err != nil {
-		log.Printf("saveImage: failed to save file %s: %v", fullPath, err)
+		log.Printf("[UPLOAD] saveImage: failed to save file %s: %v", fullPath, err)
 		return "", err
 	}
 
