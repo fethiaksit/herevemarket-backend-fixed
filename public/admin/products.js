@@ -568,7 +568,13 @@ el("editProduct")?.addEventListener("submit", async function(event) {
   if (!id) return alert("Ürün id yok");
 
   const formEl = event.target;
-  const fd = new FormData(formEl);
+  const fd = new FormData();
+  fd.set("name", formEl.elements.name.value || "");
+  fd.set("price", formEl.elements.price.value || "");
+  fd.set("brand", formEl.elements.brand.value || "");
+  fd.set("barcode", formEl.elements.barcode.value || "");
+  fd.set("stock", formEl.elements.stock.value || "");
+  fd.set("description", formEl.elements.description.value || "");
 
   const price = parseFloat(fd.get("price"));
   if (Number.isNaN(price)) return alert("Fiyat sayı olmalı");
@@ -588,6 +594,11 @@ el("editProduct")?.addEventListener("submit", async function(event) {
 
   fd.set("isActive", formEl.elements.isActive.checked ? "true" : "false");
   fd.set("isCampaign", formEl.elements.isCampaign.checked ? "true" : "false");
+
+  const imageInput = formEl.querySelector('input[name="image"]');
+  if (imageInput && imageInput.files && imageInput.files.length > 0) {
+    fd.append("image", imageInput.files[0]);
+  }
 
   const res = await fetch("/admin/api/products/" + id, {
     method: "PUT",
