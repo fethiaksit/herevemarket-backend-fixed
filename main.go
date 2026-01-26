@@ -36,7 +36,7 @@ func main() {
 
 	r := gin.Default()
 	r.LoadHTMLGlob("templates/**/*")
-	r.Static("/public", "./public")
+	r.Static("/public", "/app/public")
 
 	r.GET("/", handlers.Home())
 	r.GET("/admin/login", handlers.AdminLoginPage)
