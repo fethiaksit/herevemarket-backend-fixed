@@ -7,6 +7,8 @@ import (
 	"log"
 	"math"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -187,6 +189,43 @@ func GetAllProducts(db *mongo.Database) gin.HandlerFunc {
 	}
 }
 
+func deleteProductImage(imagePath string) {
+	trimmed := strings.TrimSpace(imagePath)
+	if trimmed == "" {
+		return
+	}
+	trimmed = strings.TrimPrefix(trimmed, "/")
+	if !strings.HasPrefix(trimmed, "uploads/products/") {
+		log.Printf("UpdateProduct image delete skipped (outside uploads/products): %s", trimmed)
+		return
+	}
+
+	relative := strings.TrimPrefix(trimmed, "uploads/products/")
+	baseDirs := []string{
+		"/app/public/uploads/products",
+		filepath.Join(".", "public", "uploads", "products"),
+	}
+
+	for _, baseDir := range baseDirs {
+		fullPath := filepath.Join(baseDir, filepath.FromSlash(relative))
+		cleanFullPath := filepath.Clean(fullPath)
+		cleanBase := filepath.Clean(baseDir)
+		if cleanFullPath != cleanBase && !strings.HasPrefix(cleanFullPath, cleanBase+string(os.PathSeparator)) {
+			log.Printf("UpdateProduct image delete skipped (outside base dir): %s", cleanFullPath)
+			continue
+		}
+		if err := os.Remove(cleanFullPath); err != nil {
+			if os.IsNotExist(err) {
+				log.Printf("UpdateProduct image delete skipped (not found): %s", cleanFullPath)
+				continue
+			}
+			log.Printf("UpdateProduct image delete failed: %s (%v)", cleanFullPath, err)
+			continue
+		}
+		log.Printf("UpdateProduct image deleted: %s", cleanFullPath)
+	}
+}
+
 /* =======================
    CREATE
 ======================= */
@@ -307,6 +346,7 @@ func UpdateProduct(db *mongo.Database) gin.HandlerFunc {
 			return
 		}
 		log.Println("UpdateProduct request received for id:", id.Hex())
+		log.Println("UpdateProduct content-type:", c.GetHeader("Content-Type"))
 
 		if strings.HasPrefix(c.GetHeader("Content-Type"), "multipart/form-data") {
 			input, err := parseMultipartProductRequest(c)
@@ -314,6 +354,32 @@ func UpdateProduct(db *mongo.Database) gin.HandlerFunc {
 				log.Println("UpdateProduct multipart error:", err)
 				respondMultipartError(c, err)
 				return
+			}
+
+			log.Printf("UpdateProduct image received: %t", input.ImageSet)
+
+			var existingImagePath string
+			if input.ImageSet {
+				var existing models.Product
+				err := db.Collection("products").FindOne(
+					context.Background(),
+					bson.M{
+						"_id":       id,
+						"isDeleted": bson.M{"$ne": true},
+					},
+				).Decode(&existing)
+				if err == mongo.ErrNoDocuments {
+					log.Println("UpdateProduct RETURN 404:", err)
+					c.JSON(http.StatusNotFound, gin.H{"error": "product not found"})
+					return
+				}
+				if err != nil {
+					log.Println("UpdateProduct find error:", err)
+					log.Println("UpdateProduct RETURN 500:", err)
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "db error"})
+					return
+				}
+				existingImagePath = strings.TrimSpace(existing.ImagePath)
 			}
 
 			updateSet := bson.M{}
@@ -365,6 +431,7 @@ func UpdateProduct(db *mongo.Database) gin.HandlerFunc {
 					return
 				}
 				updateSet["stock"] = input.Stock
+				updateSet["inStock"] = input.Stock > 0
 			}
 			if input.IsActiveSet {
 				updateSet["isActive"] = input.IsActive
@@ -385,6 +452,7 @@ func UpdateProduct(db *mongo.Database) gin.HandlerFunc {
 			if len(updateUnset) > 0 {
 				update["$unset"] = updateUnset
 			}
+			log.Printf("UpdateProduct update document: %+v", update)
 
 			result, err := db.Collection("products").UpdateOne(
 				context.Background(),
@@ -408,6 +476,10 @@ func UpdateProduct(db *mongo.Database) gin.HandlerFunc {
 				log.Println("UpdateProduct RETURN 404:", "product not found")
 				c.JSON(http.StatusNotFound, gin.H{"error": "product not found"})
 				return
+			}
+
+			if input.ImageSet && existingImagePath != "" && existingImagePath != input.ImagePath {
+				deleteProductImage(existingImagePath)
 			}
 
 			var updated models.Product
@@ -514,6 +586,7 @@ func UpdateProduct(db *mongo.Database) gin.HandlerFunc {
 				return
 			}
 			updateSet["stock"] = *req.Stock
+			updateSet["inStock"] = *req.Stock > 0
 		}
 		if req.IsActive != nil {
 			updateSet["isActive"] = *req.IsActive
