@@ -16,11 +16,19 @@ func EnsureProductIndexes(db *mongo.Database) error {
 
 	indexes := db.Collection("products").Indexes()
 
+	for _, indexName := range []string{"barcode_unique"} {
+		_, err := indexes.DropOne(ctx, indexName)
+		if err != nil {
+			log.Printf("EnsureProductIndexes: warning dropping %s index: %v", indexName, err)
+		} else {
+			log.Printf("EnsureProductIndexes: dropped %s index", indexName)
+		}
+	}
+
 	barcodeIndex := mongo.IndexModel{
 		Keys: bson.D{{Key: "barcode", Value: 1}},
 		Options: options.Index().
-			SetName("barcode_unique").
-			SetUnique(true).
+			SetName("barcode_index").
 			SetPartialFilterExpression(bson.M{
 				"barcode": bson.M{
 					"$exists": true,
@@ -28,13 +36,13 @@ func EnsureProductIndexes(db *mongo.Database) error {
 			}),
 	}
 
-	log.Println("EnsureProductIndexes: creating barcode_unique index")
+	log.Println("EnsureProductIndexes: creating barcode_index")
 	_, err := indexes.CreateOne(ctx, barcodeIndex)
 	if err != nil {
 		log.Println("EnsureProductIndexes: barcode index error:", err)
 		return err
 	}
-	log.Println("EnsureProductIndexes: barcode_unique index created")
+	log.Println("EnsureProductIndexes: barcode_index created")
 	return nil
 }
 

@@ -431,13 +431,32 @@ function selectProduct(product) {
   el("prodId").innerText = id ? ("(id: " + id + ")") : "(id yok)";
 
   const form = el("editProduct");
+  if (!form) return;
+
   form.elements.name.value = product.name || "";
   form.elements.price.value = (product.price ?? "");
+  form.elements.brand.value = product.brand || "";
+  form.elements.barcode.value = product.barcode || "";
+  form.elements.stock.value = (product.stock ?? "");
+  form.elements.description.value = product.description || "";
   form.elements.isActive.checked = !!product.isActive;
+  form.elements.isCampaign.checked = !!product.isCampaign;
 
   // Ürün kategorileri (legacy: isim listesi olabilir)
   const selectedCategories = normalizeCategoryValues(product.category);
   fillCategorySelect(el("editProductCategorySelect"), cachedCategories, selectedCategories);
+
+  const preview = el("editProductImagePreview");
+  if (preview) {
+    const imagePath = (product.imagePath || "").trim();
+    if (imagePath) {
+      preview.src = "/public/" + imagePath.replace(/^\/+/, "");
+      preview.style.display = "block";
+    } else {
+      preview.removeAttribute("src");
+      preview.style.display = "none";
+    }
+  }
 }
 
 async function handleDeleteProduct(product) {
@@ -568,6 +587,7 @@ el("editProduct")?.addEventListener("submit", async function(event) {
   fd.set("price", String(price));
 
   fd.set("isActive", formEl.elements.isActive.checked ? "true" : "false");
+  fd.set("isCampaign", formEl.elements.isCampaign.checked ? "true" : "false");
 
   const res = await fetch("/admin/api/products/" + id, {
     method: "PUT",
