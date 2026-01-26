@@ -39,6 +39,8 @@ type MultipartProductInput struct {
 	ImageSet       bool
 	Stock          int
 	StockSet       bool
+	InStock        bool
+	InStockSet     bool
 	IsActive       bool
 	IsActiveSet    bool
 	IsCampaign     bool
@@ -119,6 +121,15 @@ func parseMultipartProductRequest(c *gin.Context) (MultipartProductInput, error)
 		}
 		input.IsCampaign = parsed
 		input.IsCampaignSet = true
+	}
+
+	if value, ok := c.GetPostForm("inStock"); ok {
+		parsed, err := parseBoolValue(value)
+		if err != nil {
+			return MultipartProductInput{}, err
+		}
+		input.InStock = parsed
+		input.InStockSet = true
 	}
 
 	// ---- CATEGORY IDS (CRITICAL FIX) ----

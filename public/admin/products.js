@@ -573,8 +573,11 @@ el("editProduct")?.addEventListener("submit", async function(event) {
   fd.set("price", formEl.elements.price.value || "");
   fd.set("brand", formEl.elements.brand.value || "");
   fd.set("barcode", formEl.elements.barcode.value || "");
-  fd.set("stock", formEl.elements.stock.value || "");
+  const stockValue = formEl.elements.stock.value || "";
+  fd.set("stock", stockValue);
   fd.set("description", formEl.elements.description.value || "");
+  const stockNumber = parseInt(stockValue, 10);
+  fd.set("inStock", Number.isFinite(stockNumber) ? String(stockNumber > 0) : "false");
 
   const price = parseFloat(fd.get("price"));
   if (Number.isNaN(price)) return alert("Fiyat sayı olmalı");
