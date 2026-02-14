@@ -15,8 +15,8 @@ import (
 
 /*
 GET /products
-- Pagination OPSİYONEL
-- page + limit YOKSA → TÜM ÜRÜNLER
+- Varsayılan pagination: page=1, limit=20
+- Geçiş için: page/limit hiç verilmezse eski array response korunur
 */
 func GetProducts(db *mongo.Database) gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -51,27 +51,28 @@ func GetProducts(db *mongo.Database) gin.HandlerFunc {
 			filter["name"] = bson.M{"$regex": search, "$options": "i"}
 		}
 
-		findOptions := options.Find().
-			SetSort(bson.D{{Key: "createdAt", Value: -1}})
+		pageStr := strings.TrimSpace(c.Query("page"))
+		limitStr := strings.TrimSpace(c.Query("limit"))
 
-		// 👉 Pagination SADECE page + limit varsa uygulanır
-		pageStr := c.Query("page")
-		limitStr := c.Query("limit")
-
-		if pageStr != "" && limitStr != "" {
-			page, limit, err := parsePaginationParams(pageStr, limitStr)
-			if err != nil {
-				respondWithError(c, http.StatusBadRequest, route, "invalid pagination params")
-				return
-			}
-
-			findOptions.
-				SetSkip((page - 1) * limit).
-				SetLimit(limit)
+		page, limit, err := parsePaginationParams(pageStr, limitStr)
+		if err != nil {
+			respondWithError(c, http.StatusBadRequest, route, "invalid pagination params")
+			return
 		}
+
+		findOptions := options.Find().
+			SetSort(bson.D{{Key: "createdAt", Value: -1}}).
+			SetSkip((page - 1) * limit).
+			SetLimit(limit)
 
 		ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 		defer cancel()
+
+		total, err := db.Collection("products").CountDocuments(ctx, filter)
+		if err != nil {
+			respondWithError(c, http.StatusInternalServerError, route, "db error")
+			return
+		}
 
 		cursor, err := db.Collection("products").Find(ctx, filter, findOptions)
 		if err != nil {
@@ -86,21 +87,53 @@ func GetProducts(db *mongo.Database) gin.HandlerFunc {
 			return
 		}
 
+		totalPages := int64(0)
+		if limit > 0 {
+			totalPages = (total + limit - 1) / limit
+		}
+
+		_, hasPage := c.GetQuery("page")
+		_, hasLimit := c.GetQuery("limit")
+
 		log.Printf("[%s] returning %d products", route, len(products))
-		c.JSON(http.StatusOK, products)
+		if !hasPage && !hasLimit {
+			c.JSON(http.StatusOK, products)
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"data": products,
+			"pagination": gin.H{
+				"page":       page,
+				"limit":      limit,
+				"total":      total,
+				"totalPages": totalPages,
+			},
+		})
 	}
 }
 
 /*
 GET /products/campaigns
-- Pagination ZORUNLU
+- Varsayılan pagination: page=1, limit=20
 - response: data + pagination
 */
 func GetCampaignProducts(db *mongo.Database) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		page, limit, err := parsePaginationParams(c.Query("page"), c.Query("limit"))
+		const route = "GET /products/campaigns"
+		defer handlePanic(c, route)
+
+		if err := ensureDBConnection(c.Request.Context(), db); err != nil {
+			respondWithError(c, http.StatusServiceUnavailable, route, "database unavailable")
+			return
+		}
+
+		pageStr := strings.TrimSpace(c.Query("page"))
+		limitStr := strings.TrimSpace(c.Query("limit"))
+
+		page, limit, err := parsePaginationParams(pageStr, limitStr)
 		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			respondWithError(c, http.StatusBadRequest, route, "invalid pagination params")
 			return
 		}
 
@@ -120,29 +153,35 @@ func GetCampaignProducts(db *mongo.Database) gin.HandlerFunc {
 
 		total, err := db.Collection("products").CountDocuments(ctx, filter)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "db error"})
+			respondWithError(c, http.StatusInternalServerError, route, "db error")
 			return
 		}
 
 		cursor, err := db.Collection("products").Find(ctx, filter, findOptions)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "db error"})
+			respondWithError(c, http.StatusInternalServerError, route, "db error")
 			return
 		}
 		defer cursor.Close(ctx)
 
 		products, err := decodeProducts(ctx, cursor)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "decode error"})
+			respondWithError(c, http.StatusInternalServerError, route, "decode error")
 			return
+		}
+
+		totalPages := int64(0)
+		if limit > 0 {
+			totalPages = (total + limit - 1) / limit
 		}
 
 		c.JSON(http.StatusOK, gin.H{
 			"data": products,
 			"pagination": gin.H{
-				"page":  page,
-				"limit": limit,
-				"total": total,
+				"page":       page,
+				"limit":      limit,
+				"total":      total,
+				"totalPages": totalPages,
 			},
 		})
 	}
