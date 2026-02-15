@@ -8,6 +8,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -188,7 +189,7 @@ func saveImage(file *multipart.FileHeader) (string, error) {
 
 	filename := primitive.NewObjectID().Hex() + extension
 
-	dir := "/app/public/uploads/products"
+	dir := filepath.Join(publicRootDir, "uploads", "products")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		log.Printf("[UPLOAD] saveImage: failed to create directory %s: %v", dir, err)
 		return "", err
@@ -217,7 +218,7 @@ func saveImage(file *multipart.FileHeader) (string, error) {
 	}
 
 	// DB’ye yazılacak path
-	return filepath.ToSlash(filepath.Join("uploads", "products", filename)), nil
+	return path.Join("uploads", "products", filename), nil
 }
 
 /*
