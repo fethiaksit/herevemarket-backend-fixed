@@ -7,9 +7,8 @@ import (
 	"log"
 	"math"
 	"net/http"
-	"os"
-	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -211,43 +210,6 @@ func GetAllProducts(db *mongo.Database) gin.HandlerFunc {
 	}
 }
 
-func deleteProductImage(imagePath string) {
-	trimmed := strings.TrimSpace(imagePath)
-	if trimmed == "" {
-		return
-	}
-	trimmed = strings.TrimPrefix(trimmed, "/")
-	if !strings.HasPrefix(trimmed, "uploads/products/") {
-		log.Printf("UpdateProduct image delete skipped (outside uploads/products): %s", trimmed)
-		return
-	}
-
-	relative := strings.TrimPrefix(trimmed, "uploads/products/")
-	baseDirs := []string{
-		"/app/public/uploads/products",
-		filepath.Join(".", "public", "uploads", "products"),
-	}
-
-	for _, baseDir := range baseDirs {
-		fullPath := filepath.Join(baseDir, filepath.FromSlash(relative))
-		cleanFullPath := filepath.Clean(fullPath)
-		cleanBase := filepath.Clean(baseDir)
-		if cleanFullPath != cleanBase && !strings.HasPrefix(cleanFullPath, cleanBase+string(os.PathSeparator)) {
-			log.Printf("UpdateProduct image delete skipped (outside base dir): %s", cleanFullPath)
-			continue
-		}
-		if err := os.Remove(cleanFullPath); err != nil {
-			if os.IsNotExist(err) {
-				log.Printf("UpdateProduct image delete skipped (not found): %s", cleanFullPath)
-				continue
-			}
-			log.Printf("UpdateProduct image delete failed: %s (%v)", cleanFullPath, err)
-			continue
-		}
-		log.Printf("UpdateProduct image deleted: %s", cleanFullPath)
-	}
-}
-
 /* =======================
    CREATE
 ======================= */
@@ -370,6 +332,16 @@ func UpdateProduct(db *mongo.Database) gin.HandlerFunc {
 		log.Println("UpdateProduct request received for id:", id.Hex())
 		log.Println("UpdateProduct content-type:", c.GetHeader("Content-Type"))
 
+		removeImage := false
+		if removeRaw := strings.TrimSpace(c.Query("removeImage")); removeRaw != "" {
+			parsedRemove, err := strconv.ParseBool(removeRaw)
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "removeImage must be boolean"})
+				return
+			}
+			removeImage = parsedRemove
+		}
+
 		if strings.HasPrefix(c.GetHeader("Content-Type"), "multipart/form-data") {
 			input, err := parseMultipartProductRequest(c)
 			if err != nil {
@@ -388,7 +360,7 @@ func UpdateProduct(db *mongo.Database) gin.HandlerFunc {
 			)
 
 			var existingImagePath string
-			if input.ImageSet {
+			if input.ImageSet || removeImage {
 				var existing models.Product
 				err := db.Collection("products").FindOne(
 					context.Background(),
@@ -453,6 +425,10 @@ func UpdateProduct(db *mongo.Database) gin.HandlerFunc {
 			}
 			if input.ImageSet && strings.TrimSpace(input.ImagePath) != "" {
 				updateSet["imagePath"] = input.ImagePath
+				updateUnset["image"] = ""
+			} else if removeImage {
+				updateUnset["imagePath"] = ""
+				updateUnset["image"] = ""
 			}
 			if input.StockSet {
 				if input.Stock < 0 {
@@ -516,7 +492,13 @@ func UpdateProduct(db *mongo.Database) gin.HandlerFunc {
 			}
 
 			if input.ImageSet && existingImagePath != "" && existingImagePath != input.ImagePath {
-				deleteProductImage(existingImagePath)
+				if err := safeDeleteUpload(existingImagePath); err != nil {
+					log.Printf("UpdateProduct old image delete failed: %v", err)
+				}
+			} else if removeImage && existingImagePath != "" {
+				if err := safeDeleteUpload(existingImagePath); err != nil {
+					log.Printf("UpdateProduct removeImage delete failed: %v", err)
+				}
 			}
 
 			var updated models.Product
@@ -579,6 +561,27 @@ func UpdateProduct(db *mongo.Database) gin.HandlerFunc {
 		}
 		log.Printf("UpdateProduct parsed request: %+v", req)
 
+		var existingImagePath string
+		if removeImage {
+			var existing models.Product
+			err := db.Collection("products").FindOne(
+				context.Background(),
+				bson.M{
+					"_id":       id,
+					"isDeleted": bson.M{"$ne": true},
+				},
+			).Decode(&existing)
+			if err == mongo.ErrNoDocuments {
+				c.JSON(http.StatusNotFound, gin.H{"error": "product not found"})
+				return
+			}
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "db error"})
+				return
+			}
+			existingImagePath = strings.TrimSpace(existing.ImagePath)
+		}
+
 		updateSet := bson.M{}
 		updateUnset := bson.M{}
 
@@ -633,6 +636,10 @@ func UpdateProduct(db *mongo.Database) gin.HandlerFunc {
 		if req.IsCampaign != nil {
 			updateSet["isCampaign"] = *req.IsCampaign
 		}
+		if removeImage {
+			updateUnset["imagePath"] = ""
+			updateUnset["image"] = ""
+		}
 
 		log.Printf(
 			"UpdateProduct update fields: set=%v unset=%v",
@@ -679,6 +686,12 @@ func UpdateProduct(db *mongo.Database) gin.HandlerFunc {
 			return
 		}
 
+		if removeImage && existingImagePath != "" {
+			if err := safeDeleteUpload(existingImagePath); err != nil {
+				log.Printf("UpdateProduct removeImage delete failed: %v", err)
+			}
+		}
+
 		var updated models.Product
 		err = db.Collection("products").FindOne(
 			context.Background(),
@@ -719,6 +732,23 @@ func DeleteProduct(db *mongo.Database) gin.HandlerFunc {
 
 		now := time.Now()
 
+		var existing models.Product
+		err = db.Collection("products").FindOne(
+			context.Background(),
+			bson.M{
+				"_id":       id,
+				"isDeleted": bson.M{"$ne": true},
+			},
+		).Decode(&existing)
+		if err == mongo.ErrNoDocuments {
+			c.JSON(http.StatusNotFound, gin.H{"error": "product not found"})
+			return
+		}
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "db error"})
+			return
+		}
+
 		res, err := db.Collection("products").UpdateOne(
 			context.Background(),
 			bson.M{
@@ -740,6 +770,10 @@ func DeleteProduct(db *mongo.Database) gin.HandlerFunc {
 		if res.MatchedCount == 0 {
 			c.JSON(http.StatusNotFound, gin.H{"error": "product not found"})
 			return
+		}
+
+		if err := safeDeleteUpload(existing.ImagePath); err != nil {
+			log.Printf("DeleteProduct image delete failed: %v", err)
 		}
 
 		c.JSON(http.StatusOK, gin.H{"message": "product deleted"})
