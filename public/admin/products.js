@@ -7,6 +7,7 @@ let currentPage = 1;
 let pageLimit = 20;
 let totalPages = 1;
 let lastQueryKey = "";
+let searchDebounceTimer = null;
 const isDev = ["localhost", "127.0.0.1"].includes(window.location.hostname);
 
 // ---------- Helpers ----------
@@ -238,9 +239,10 @@ function renderProductsTable(data) {
   if (!tbody) return;
   tbody.innerHTML = "";
 
+  const searchValue = (el("productSearch")?.value || "").trim();
   if (!Array.isArray(data) || data.length === 0) {
     const tr = document.createElement("tr");
-    tr.innerHTML = `<td class="muted" colspan="3">Ürün yok</td>`;
+    tr.innerHTML = `<td class="muted" colspan="6">${searchValue ? "Sonuç bulunamadı" : "Ürün yok"}</td>`;
     tbody.appendChild(tr);
     return;
   }
@@ -249,6 +251,9 @@ function renderProductsTable(data) {
     const tr = document.createElement("tr");
     tr.innerHTML = `
       <td>${p.name || "-"}</td>
+      <td>${p.brand || "-"}</td>
+      <td>${p.barcode || "-"}</td>
+      <td>${Number.isFinite(Number(p.stock)) ? Number(p.stock) : "-"}</td>
       <td>${p.isCampaign ? "Evet" : "Hayır"}</td>
       <td><button type="button" class="small">Düzenle</button></td>
     `;
@@ -330,6 +335,24 @@ function renderPagination() {
   container.appendChild(pageInfo);
   container.appendChild(nextBtn);
   container.appendChild(limitWrap);
+}
+
+function setSearchStatus(message) {
+  const node = el("productSearchStatus");
+  if (node) {
+    node.textContent = message || "";
+  }
+}
+
+function scheduleProductSearch() {
+  if (searchDebounceTimer) {
+    clearTimeout(searchDebounceTimer);
+  }
+
+  setSearchStatus("Aranıyor…");
+  searchDebounceTimer = setTimeout(() => {
+    loadProducts(1);
+  }, 400);
 }
 
 async function loadProducts(page = 1) {
@@ -416,6 +439,7 @@ async function loadProducts(page = 1) {
   renderProductsTable(currentProducts);
   renderPagination();
   setStatus("");
+  setSearchStatus("");
 }
 
 function selectProduct(product) {
@@ -509,8 +533,21 @@ async function handleDeleteProduct(product) {
 el("categoryFilter")?.addEventListener("change", () => loadProducts(1));
 const searchFilterInput = el("productSearch") || el("searchInput");
 if (searchFilterInput) {
-  searchFilterInput.addEventListener("input", () => loadProducts(1));
+  searchFilterInput.addEventListener("input", scheduleProductSearch);
 }
+el("clearProductSearch")?.addEventListener("click", () => {
+  if (searchDebounceTimer) {
+    clearTimeout(searchDebounceTimer);
+    searchDebounceTimer = null;
+  }
+
+  const input = el("productSearch") || el("searchInput");
+  if (input) {
+    input.value = "";
+  }
+  setSearchStatus("");
+  loadProducts(1);
+});
 const isActiveFilterEl = el("isActiveFilter");
 if (isActiveFilterEl) {
   isActiveFilterEl.addEventListener("change", () => loadProducts(1));
@@ -631,6 +668,7 @@ async function init() {
   if (deleteButton) {
     deleteButton.disabled = true;
   }
+  setSearchStatus("");
   await loadCategories();
   await loadProducts(1);
 }
