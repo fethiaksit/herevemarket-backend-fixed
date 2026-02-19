@@ -161,7 +161,12 @@ func GetAllProducts(db *mongo.Database) gin.HandlerFunc {
 		}
 
 		if search := strings.TrimSpace(c.Query("search")); search != "" {
-			filter["name"] = bson.M{"$regex": search, "$options": "i"}
+			filter["$or"] = []bson.M{
+				{"name": bson.M{"$regex": search, "$options": "i"}},
+				{"brand": bson.M{"$regex": search, "$options": "i"}},
+				{"description": bson.M{"$regex": search, "$options": "i"}},
+				{"barcode": bson.M{"$regex": search, "$options": "i"}},
+			}
 		}
 
 		if isActive := strings.TrimSpace(c.Query("isActive")); isActive != "" {

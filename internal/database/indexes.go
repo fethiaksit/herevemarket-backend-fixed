@@ -36,13 +36,28 @@ func EnsureProductIndexes(db *mongo.Database) error {
 			}),
 	}
 
+	searchTextIndex := mongo.IndexModel{
+		Keys: bson.D{
+			{Key: "name", Value: "text"},
+			{Key: "brand", Value: "text"},
+			{Key: "description", Value: "text"},
+		},
+		Options: options.Index().SetName("product_search_text"),
+	}
+
 	log.Println("EnsureProductIndexes: creating barcode_index")
-	_, err := indexes.CreateOne(ctx, barcodeIndex)
-	if err != nil {
+	if _, err := indexes.CreateOne(ctx, barcodeIndex); err != nil {
 		log.Println("EnsureProductIndexes: barcode index error:", err)
 		return err
 	}
 	log.Println("EnsureProductIndexes: barcode_index created")
+
+	log.Println("EnsureProductIndexes: creating product_search_text")
+	if _, err := indexes.CreateOne(ctx, searchTextIndex); err != nil {
+		log.Println("EnsureProductIndexes: search text index error:", err)
+		return err
+	}
+	log.Println("EnsureProductIndexes: product_search_text created")
 	return nil
 }
 

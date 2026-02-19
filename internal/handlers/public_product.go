@@ -48,7 +48,12 @@ func GetProducts(db *mongo.Database) gin.HandlerFunc {
 		}
 
 		if search := strings.TrimSpace(c.Query("search")); search != "" {
-			filter["name"] = bson.M{"$regex": search, "$options": "i"}
+			filter["$or"] = []bson.M{
+				{"name": bson.M{"$regex": search, "$options": "i"}},
+				{"brand": bson.M{"$regex": search, "$options": "i"}},
+				{"description": bson.M{"$regex": search, "$options": "i"}},
+				{"barcode": bson.M{"$regex": search, "$options": "i"}},
+			}
 		}
 
 		pageStr := strings.TrimSpace(c.Query("page"))
