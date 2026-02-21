@@ -11,7 +11,7 @@ type Product struct {
 	Name        string             `bson:"name" json:"name"`
 	Price       float64            `bson:"price" json:"price"`
 	SaleEnabled bool               `bson:"saleEnabled" json:"saleEnabled"`
-	SalePrice   float64            `bson:"salePrice,omitempty" json:"salePrice,omitempty"`
+	SalePrice   float64            `bson:"salePrice" json:"salePrice"`
 	IsOnSale    bool               `bson:"-" json:"isOnSale"`
 	Category    StringList         `bson:"category" json:"category"`
 	Description string             `bson:"description,omitempty" json:"description,omitempty"`

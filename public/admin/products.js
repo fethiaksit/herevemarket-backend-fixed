@@ -355,6 +355,52 @@ function scheduleProductSearch() {
   }, 400);
 }
 
+function setSalePriceVisibility(formEl, enabled) {
+  if (!formEl || !formEl.elements?.salePrice) return;
+  const salePriceInput = formEl.elements.salePrice;
+  const salePriceLabel = salePriceInput.previousElementSibling;
+  salePriceInput.disabled = !enabled;
+  salePriceInput.style.display = enabled ? "" : "none";
+  if (salePriceLabel && salePriceLabel.tagName === "LABEL") {
+    salePriceLabel.style.display = enabled ? "" : "none";
+  }
+}
+
+function resetSaleFields(formEl) {
+  if (!formEl || !formEl.elements?.saleEnabled || !formEl.elements?.salePrice) return;
+  formEl.elements.saleEnabled.checked = false;
+  formEl.elements.salePrice.value = "";
+  setSalePriceVisibility(formEl, false);
+}
+
+function hydrateSaleFields(formEl, product) {
+  if (!formEl || !formEl.elements?.saleEnabled || !formEl.elements?.salePrice) return;
+  const saleEnabled = !!product?.saleEnabled;
+  formEl.elements.saleEnabled.checked = saleEnabled;
+  if (!saleEnabled) {
+    formEl.elements.salePrice.value = "";
+    setSalePriceVisibility(formEl, false);
+    return;
+  }
+
+  const salePrice = Number(product?.salePrice);
+  formEl.elements.salePrice.value = Number.isFinite(salePrice) && salePrice > 0 ? String(salePrice) : "";
+  setSalePriceVisibility(formEl, true);
+}
+
+function bindSaleToggle(formEl) {
+  if (!formEl || !formEl.elements?.saleEnabled || !formEl.elements?.salePrice) return;
+  formEl.elements.saleEnabled.addEventListener("change", () => {
+    const enabled = !!formEl.elements.saleEnabled.checked;
+    setSalePriceVisibility(formEl, enabled);
+    if (!enabled) {
+      formEl.elements.salePrice.value = "";
+      return;
+    }
+    formEl.elements.salePrice.focus();
+  });
+}
+
 async function loadProducts(page = 1) {
   const selected = el("categoryFilter")?.value || "";
   const searchInput = el("productSearch") || el("searchInput");
@@ -457,10 +503,12 @@ function selectProduct(product) {
   const form = el("editProduct");
   if (!form) return;
 
+  form.reset();
+  resetSaleFields(form);
+
   form.elements.name.value = product.name || "";
   form.elements.price.value = (product.price ?? "");
-  form.elements.saleEnabled.checked = !!product.saleEnabled;
-  form.elements.salePrice.value = (product.salePrice ?? "");
+  hydrateSaleFields(form, product);
   form.elements.brand.value = product.brand || "";
   form.elements.barcode.value = product.barcode || "";
   form.elements.stock.value = (product.stock ?? "");
@@ -580,11 +628,17 @@ el("addProduct")?.addEventListener("submit", async function(event) {
   fd.set("price", String(price));
   const saleEnabled = !!formEl.elements.saleEnabled.checked;
   fd.set("saleEnabled", saleEnabled ? "true" : "false");
+  const parsedPrice = Number(price);
   const salePriceValue = String(formEl.elements.salePrice.value || "").trim();
-  if (salePriceValue !== "") {
+  if (saleEnabled) {
+    if (salePriceValue === "") return alert("İndirimli fiyat giriniz");
     const salePrice = parseFloat(salePriceValue);
     if (Number.isNaN(salePrice)) return alert("İndirimli fiyat sayı olmalı");
+    if (salePrice <= 0) return alert("İndirimli fiyat 0'dan büyük olmalı");
+    if (salePrice >= parsedPrice) return alert("İndirimli fiyat normal fiyattan düşük olmalı");
     fd.set("salePrice", String(salePrice));
+  } else {
+    fd.set("salePrice", "0");
   }
 
   const res = await fetch("/admin/api/products", {
@@ -603,6 +657,7 @@ el("addProduct")?.addEventListener("submit", async function(event) {
   }
 
   formEl.reset();
+  resetSaleFields(formEl);
   fillCategorySelect(el("addProductCategorySelect"), cachedCategories, []);
   await loadProducts(currentPage);
 });
@@ -643,11 +698,17 @@ el("editProduct")?.addEventListener("submit", async function(event) {
   fd.set("price", String(price));
   const saleEnabled = !!formEl.elements.saleEnabled.checked;
   fd.set("saleEnabled", saleEnabled ? "true" : "false");
+  const parsedPrice = Number(price);
   const salePriceValue = String(formEl.elements.salePrice.value || "").trim();
-  if (salePriceValue !== "") {
+  if (saleEnabled) {
+    if (salePriceValue === "") return alert("İndirimli fiyat giriniz");
     const salePrice = parseFloat(salePriceValue);
     if (Number.isNaN(salePrice)) return alert("İndirimli fiyat sayı olmalı");
+    if (salePrice <= 0) return alert("İndirimli fiyat 0'dan büyük olmalı");
+    if (salePrice >= parsedPrice) return alert("İndirimli fiyat normal fiyattan düşük olmalı");
     fd.set("salePrice", String(salePrice));
+  } else {
+    fd.set("salePrice", "0");
   }
 
   fd.set("isActive", formEl.elements.isActive.checked ? "true" : "false");
@@ -687,6 +748,10 @@ async function init() {
     deleteButton.disabled = true;
   }
   setSearchStatus("");
+  resetSaleFields(el("addProduct"));
+  resetSaleFields(el("editProduct"));
+  bindSaleToggle(el("addProduct"));
+  bindSaleToggle(el("editProduct"));
   await loadCategories();
   await loadProducts(1);
 }
