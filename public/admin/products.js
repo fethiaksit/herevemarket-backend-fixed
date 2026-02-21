@@ -408,17 +408,25 @@ function parseBooleanValue(value) {
   return false;
 }
 
+
+function getSaleEnabledCheckbox(formEl) {
+  if (!formEl) return null;
+  return formEl.querySelector('input[type="checkbox"][name="saleEnabled"]');
+}
+
 function resetSaleFields(formEl) {
-  if (!formEl || !formEl.elements?.saleEnabled || !formEl.elements?.salePrice) return;
-  formEl.elements.saleEnabled.checked = false;
+  const saleCheckbox = getSaleEnabledCheckbox(formEl);
+  if (!formEl || !saleCheckbox || !formEl.elements?.salePrice) return;
+  saleCheckbox.checked = false;
   formEl.elements.salePrice.value = "";
   setSalePriceVisibility(formEl, false);
 }
 
 function hydrateSaleFields(formEl, product) {
-  if (!formEl || !formEl.elements?.saleEnabled || !formEl.elements?.salePrice) return;
+  const saleCheckbox = getSaleEnabledCheckbox(formEl);
+  if (!formEl || !saleCheckbox || !formEl.elements?.salePrice) return;
   const saleEnabled = parseBooleanValue(product?.saleEnabled);
-  formEl.elements.saleEnabled.checked = saleEnabled;
+  saleCheckbox.checked = saleEnabled;
   if (!saleEnabled) {
     formEl.elements.salePrice.value = "";
     setSalePriceVisibility(formEl, false);
@@ -431,9 +439,10 @@ function hydrateSaleFields(formEl, product) {
 }
 
 function bindSaleToggle(formEl) {
-  if (!formEl || !formEl.elements?.saleEnabled || !formEl.elements?.salePrice) return;
-  formEl.elements.saleEnabled.addEventListener("change", () => {
-    const enabled = !!formEl.elements.saleEnabled.checked;
+  const saleCheckbox = getSaleEnabledCheckbox(formEl);
+  if (!formEl || !saleCheckbox || !formEl.elements?.salePrice) return;
+  saleCheckbox.addEventListener("change", () => {
+    const enabled = !!saleCheckbox.checked;
     setSalePriceVisibility(formEl, enabled);
     if (!enabled) {
       formEl.elements.salePrice.value = "";
@@ -671,7 +680,7 @@ el("addProduct")?.addEventListener("submit", async function(event) {
   categories.forEach(c => fd.append("category_id", c)); // ✅ id gönder
 
   fd.set("price", String(price));
-  const saleEnabled = !!formEl.elements.saleEnabled.checked;
+  const saleEnabled = !!getSaleEnabledCheckbox(formEl)?.checked;
   fd.set("saleEnabled", saleEnabled ? "true" : "false");
   const parsedPrice = Number(price);
   const salePriceValue = String(formEl.elements.salePrice.value || "").trim();
@@ -739,7 +748,7 @@ el("editProduct")?.addEventListener("submit", async function(event) {
   fd.delete("category_id");
   categories.forEach(c => fd.append("category_id", c)); // ✅ id gönder
   fd.set("price", String(price));
-  const saleEnabled = !!formEl.elements.saleEnabled.checked;
+  const saleEnabled = !!getSaleEnabledCheckbox(formEl)?.checked;
   fd.set("saleEnabled", saleEnabled ? "true" : "false");
   const parsedPrice = Number(price);
   const salePriceValue = String(formEl.elements.salePrice.value || "").trim();

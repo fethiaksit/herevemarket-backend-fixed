@@ -108,7 +108,7 @@ func parseMultipartProductRequest(c *gin.Context) (MultipartProductInput, error)
 		input.StockSet = true
 	}
 
-	if value, ok := c.GetPostForm("salePrice"); ok {
+	if value, ok := getPostFormAny(c, "salePrice", "sale_price"); ok {
 		parsed, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
 		if err != nil {
 			return MultipartProductInput{}, err
@@ -146,7 +146,7 @@ func parseMultipartProductRequest(c *gin.Context) (MultipartProductInput, error)
 		input.InStockSet = true
 	}
 
-	if value, ok := c.GetPostForm("saleEnabled"); ok {
+	if value, ok := getPostFormAny(c, "saleEnabled", "sale_enabled"); ok {
 		parsed, err := parseBoolValue(value)
 		if err != nil {
 			return MultipartProductInput{}, err
@@ -255,6 +255,24 @@ func parseBoolValue(value string) (bool, error) {
 		return true, nil
 	}
 	return strconv.ParseBool(value)
+}
+
+func getPostFormAny(c *gin.Context, keys ...string) (string, bool) {
+	for _, key := range keys {
+		values := c.PostFormArray(key)
+		if len(values) == 0 {
+			continue
+		}
+		for i := len(values) - 1; i >= 0; i-- {
+			value := strings.TrimSpace(values[i])
+			if value == "" {
+				continue
+			}
+			return value, true
+		}
+		return "", true
+	}
+	return "", false
 }
 
 func respondMultipartError(c *gin.Context, err error) {

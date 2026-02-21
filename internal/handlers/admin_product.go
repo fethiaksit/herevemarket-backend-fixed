@@ -423,14 +423,15 @@ func UpdateProduct(db *mongo.Database) gin.HandlerFunc {
 				}
 				updateSet["price"] = input.Price
 			}
+			var saleInput saleUpdateInput
+			if input.PriceSet {
+				saleInput.Price = &input.Price
+			}
 			if input.SaleEnabledSet {
-				updateSet["saleEnabled"] = input.SaleEnabled
-				if !input.SaleEnabled {
-					updateSet["salePrice"] = 0
-				}
+				saleInput.SaleEnabled = &input.SaleEnabled
 			}
 			if input.SalePriceSet {
-				updateSet["salePrice"] = input.SalePrice
+				saleInput.SalePrice = &input.SalePrice
 			}
 			if input.CategoryIDSet {
 				categoryNames, err := resolveCategoryNamesByIDs(context.Background(), db, input.CategoryIDs)
@@ -484,26 +485,16 @@ func UpdateProduct(db *mongo.Database) gin.HandlerFunc {
 				mapKeys(updateUnset),
 			)
 
-			finalPrice := input.Price
-			if !input.PriceSet {
-				finalPrice = existing.Price
-			}
-			finalSaleEnabled := existing.SaleEnabled
-			if input.SaleEnabledSet {
-				finalSaleEnabled = input.SaleEnabled
-			}
-			finalSalePrice := existing.SalePrice
-			finalSalePriceSet := existing.SalePrice > 0
-			if input.SalePriceSet {
-				finalSalePrice = input.SalePrice
-				finalSalePriceSet = true
-			}
-			if finalSaleEnabled && !finalSalePriceSet {
-				finalSalePrice = 0
-			}
-			if err := validateSaleFields(finalPrice, finalSaleEnabled, finalSalePrice, finalSalePriceSet); err != nil {
+			saleUpdate, err := resolveSaleUpdate(existing.Price, existing.SaleEnabled, existing.SalePrice, saleInput)
+			if err != nil {
 				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 				return
+			}
+			if saleUpdate.SetSaleEnabled {
+				updateSet["saleEnabled"] = saleUpdate.SaleEnabled
+			}
+			if saleUpdate.SetSalePrice {
+				updateSet["salePrice"] = saleUpdate.SalePrice
 			}
 
 			if len(updateSet) == 0 && len(updateUnset) == 0 {
@@ -597,6 +588,16 @@ func UpdateProduct(db *mongo.Database) gin.HandlerFunc {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
 			return
 		}
+		if value, ok := raw["sale_enabled"]; ok {
+			if _, exists := raw["saleEnabled"]; !exists {
+				raw["saleEnabled"] = value
+			}
+		}
+		if value, ok := raw["sale_price"]; ok {
+			if _, exists := raw["salePrice"]; !exists {
+				raw["salePrice"] = value
+			}
+		}
 
 		if val, ok := raw["isCampaign"]; ok {
 			if _, ok := val.(bool); !ok {
@@ -612,8 +613,14 @@ func UpdateProduct(db *mongo.Database) gin.HandlerFunc {
 			}
 		}
 
+		normalizedBody, err := json.Marshal(raw)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+			return
+		}
+
 		var req ProductUpdateRequest
-		if err := json.Unmarshal(body, &req); err != nil {
+		if err := json.Unmarshal(normalizedBody, &req); err != nil {
 			log.Println("UpdateProduct bind error:", err)
 			log.Println("UpdateProduct RETURN 400:", err)
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
@@ -656,14 +663,15 @@ func UpdateProduct(db *mongo.Database) gin.HandlerFunc {
 			}
 			updateSet["price"] = *req.Price
 		}
+		var saleInput saleUpdateInput
+		if req.Price != nil {
+			saleInput.Price = req.Price
+		}
 		if req.SaleEnabled != nil {
-			updateSet["saleEnabled"] = *req.SaleEnabled
-			if !*req.SaleEnabled {
-				updateSet["salePrice"] = 0
-			}
+			saleInput.SaleEnabled = req.SaleEnabled
 		}
 		if req.SalePrice != nil {
-			updateSet["salePrice"] = *req.SalePrice
+			saleInput.SalePrice = req.SalePrice
 		}
 		if req.CategoryIDs != nil {
 			categoryNames, err := resolveCategoryNamesByIDs(context.Background(), db, *req.CategoryIDs)
@@ -716,13 +724,6 @@ func UpdateProduct(db *mongo.Database) gin.HandlerFunc {
 			mapKeys(updateUnset),
 		)
 
-		finalPrice := 0.0
-		if req.Price != nil {
-			finalPrice = *req.Price
-		}
-		finalSaleEnabled := false
-		finalSalePrice := 0.0
-		finalSalePriceSet := false
 		if req.Price != nil || req.SaleEnabled != nil || req.SalePrice != nil {
 			var existing models.Product
 			err := db.Collection("products").FindOne(
@@ -738,26 +739,17 @@ func UpdateProduct(db *mongo.Database) gin.HandlerFunc {
 				return
 			}
 
-			if req.Price == nil {
-				finalPrice = existing.Price
+			saleUpdate, err := resolveSaleUpdate(existing.Price, existing.SaleEnabled, existing.SalePrice, saleInput)
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
 			}
-			finalSaleEnabled = existing.SaleEnabled
-			if req.SaleEnabled != nil {
-				finalSaleEnabled = *req.SaleEnabled
+			if saleUpdate.SetSaleEnabled {
+				updateSet["saleEnabled"] = saleUpdate.SaleEnabled
 			}
-			finalSalePrice = existing.SalePrice
-			finalSalePriceSet = existing.SalePrice > 0
-			if req.SalePrice != nil {
-				finalSalePrice = *req.SalePrice
-				finalSalePriceSet = true
+			if saleUpdate.SetSalePrice {
+				updateSet["salePrice"] = saleUpdate.SalePrice
 			}
-		}
-		if req.SaleEnabled != nil && *req.SaleEnabled && req.SalePrice == nil && !finalSalePriceSet {
-			finalSalePrice = 0
-		}
-		if err := validateSaleFields(finalPrice, finalSaleEnabled, finalSalePrice, finalSalePriceSet); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
 		}
 
 		if len(updateSet) == 0 && len(updateUnset) == 0 {
