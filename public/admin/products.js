@@ -459,6 +459,8 @@ function selectProduct(product) {
 
   form.elements.name.value = product.name || "";
   form.elements.price.value = (product.price ?? "");
+  form.elements.saleEnabled.checked = !!product.saleEnabled;
+  form.elements.salePrice.value = (product.salePrice ?? "");
   form.elements.brand.value = product.brand || "";
   form.elements.barcode.value = product.barcode || "";
   form.elements.stock.value = (product.stock ?? "");
@@ -576,6 +578,14 @@ el("addProduct")?.addEventListener("submit", async function(event) {
   categories.forEach(c => fd.append("category_id", c)); // ✅ id gönder
 
   fd.set("price", String(price));
+  const saleEnabled = !!formEl.elements.saleEnabled.checked;
+  fd.set("saleEnabled", saleEnabled ? "true" : "false");
+  const salePriceValue = String(formEl.elements.salePrice.value || "").trim();
+  if (salePriceValue !== "") {
+    const salePrice = parseFloat(salePriceValue);
+    if (Number.isNaN(salePrice)) return alert("İndirimli fiyat sayı olmalı");
+    fd.set("salePrice", String(salePrice));
+  }
 
   const res = await fetch("/admin/api/products", {
     method: "POST",
@@ -631,6 +641,14 @@ el("editProduct")?.addEventListener("submit", async function(event) {
   fd.delete("category_id");
   categories.forEach(c => fd.append("category_id", c)); // ✅ id gönder
   fd.set("price", String(price));
+  const saleEnabled = !!formEl.elements.saleEnabled.checked;
+  fd.set("saleEnabled", saleEnabled ? "true" : "false");
+  const salePriceValue = String(formEl.elements.salePrice.value || "").trim();
+  if (salePriceValue !== "") {
+    const salePrice = parseFloat(salePriceValue);
+    if (Number.isNaN(salePrice)) return alert("İndirimli fiyat sayı olmalı");
+    fd.set("salePrice", String(salePrice));
+  }
 
   fd.set("isActive", formEl.elements.isActive.checked ? "true" : "false");
   fd.set("isCampaign", formEl.elements.isCampaign.checked ? "true" : "false");

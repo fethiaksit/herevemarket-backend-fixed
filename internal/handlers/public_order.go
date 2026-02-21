@@ -23,8 +23,8 @@ import (
 
 type createOrderItemRequest struct {
 	ProductID string  `json:"productId" binding:"required"`
-	Name      string  `json:"name" binding:"required"`
-	Price     float64 `json:"price" binding:"required"`
+	Name      string  `json:"name"`
+	Price     float64 `json:"price"`
 	Quantity  int     `json:"quantity" binding:"required"`
 }
 
@@ -92,6 +92,9 @@ func CreateOrder(db *mongo.Database, jwtSecret string) gin.HandlerFunc {
 
 		var orderID primitive.ObjectID
 		_, err = session.WithTransaction(ctx, func(sessCtx mongo.SessionContext) (interface{}, error) {
+			calculatedItems := make([]models.OrderItem, 0, len(order.Items))
+			calculatedTotal := 0.0
+
 			for _, item := range order.Items {
 				var product models.Product
 				err := db.Collection("products").FindOne(
@@ -116,6 +119,15 @@ func CreateOrder(db *mongo.Database, jwtSecret string) gin.HandlerFunc {
 					}
 				}
 
+				unitPrice := effectiveProductPrice(product.Price, product.SaleEnabled, product.SalePrice)
+				calculatedItems = append(calculatedItems, models.OrderItem{
+					ProductID: item.ProductID,
+					Name:      product.Name,
+					Price:     unitPrice,
+					Quantity:  item.Quantity,
+				})
+				calculatedTotal += unitPrice * float64(item.Quantity)
+
 				filter := bson.M{
 					"_id":       item.ProductID,
 					"isDeleted": bson.M{"$ne": true},
@@ -135,6 +147,9 @@ func CreateOrder(db *mongo.Database, jwtSecret string) gin.HandlerFunc {
 					}
 				}
 			}
+
+			order.Items = calculatedItems
+			order.TotalPrice = calculatedTotal
 
 			res, err := db.Collection("orders").InsertOne(sessCtx, order)
 			if err != nil {
@@ -237,17 +252,12 @@ func buildOrderFromRequest(req createOrderRequest) (models.Order, error) {
 			return models.Order{}, errors.New("quantity must be greater than zero")
 		}
 
-		if item.Price < 0 {
-			return models.Order{}, errors.New("price must be zero or greater")
-		}
-
 		items = append(items, models.OrderItem{
 			ProductID: productID,
-			Name:      item.Name,
-			Price:     item.Price,
+			Name:      strings.TrimSpace(item.Name),
+			Price:     0,
 			Quantity:  item.Quantity,
 		})
-		total += item.Price * float64(item.Quantity)
 	}
 
 	order := models.Order{

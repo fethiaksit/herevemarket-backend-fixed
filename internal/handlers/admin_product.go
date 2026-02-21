@@ -28,6 +28,8 @@ import (
 type ProductUpdateRequest struct {
 	Name        *string   `json:"name"`
 	Price       *float64  `json:"price"`
+	SaleEnabled *bool     `json:"saleEnabled"`
+	SalePrice   *float64  `json:"salePrice"`
 	CategoryIDs *[]string `json:"category_id"`
 	Description *string   `json:"description"`
 	Barcode     *string   `json:"barcode"`
@@ -249,6 +251,20 @@ func CreateProduct(db *mongo.Database) gin.HandlerFunc {
 			return
 		}
 
+		saleEnabled := false
+		if input.SaleEnabledSet {
+			saleEnabled = input.SaleEnabled
+		}
+		salePrice := 0.0
+		if input.SalePriceSet {
+			salePrice = input.SalePrice
+		}
+
+		if err := validateSaleFields(input.Price, saleEnabled, salePrice, input.SalePriceSet); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+
 		if !input.CategoryIDSet {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "category_id required"})
 			return
@@ -294,6 +310,9 @@ func CreateProduct(db *mongo.Database) gin.HandlerFunc {
 		product := models.Product{
 			Name:        name,
 			Price:       input.Price,
+			SaleEnabled: saleEnabled,
+			SalePrice:   salePrice,
+			IsOnSale:    isProductOnSale(input.Price, saleEnabled, salePrice),
 			Category:    models.StringList(categories),
 			Description: description,
 			Barcode:     barcode,
@@ -364,29 +383,27 @@ func UpdateProduct(db *mongo.Database) gin.HandlerFunc {
 				sanitizeLogValue(input.Description, 120),
 			)
 
-			var existingImagePath string
-			if input.ImageSet || removeImage {
-				var existing models.Product
-				err := db.Collection("products").FindOne(
-					context.Background(),
-					bson.M{
-						"_id":       id,
-						"isDeleted": bson.M{"$ne": true},
-					},
-				).Decode(&existing)
-				if err == mongo.ErrNoDocuments {
-					log.Println("UpdateProduct RETURN 404:", err)
-					c.JSON(http.StatusNotFound, gin.H{"error": "product not found"})
-					return
-				}
-				if err != nil {
-					log.Println("UpdateProduct find error:", err)
-					log.Println("UpdateProduct RETURN 500:", err)
-					c.JSON(http.StatusInternalServerError, gin.H{"error": "db error"})
-					return
-				}
-				existingImagePath = strings.TrimSpace(existing.ImagePath)
+			var existing models.Product
+			err = db.Collection("products").FindOne(
+				context.Background(),
+				bson.M{
+					"_id":       id,
+					"isDeleted": bson.M{"$ne": true},
+				},
+			).Decode(&existing)
+			if err == mongo.ErrNoDocuments {
+				log.Println("UpdateProduct RETURN 404:", err)
+				c.JSON(http.StatusNotFound, gin.H{"error": "product not found"})
+				return
 			}
+			if err != nil {
+				log.Println("UpdateProduct find error:", err)
+				log.Println("UpdateProduct RETURN 500:", err)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "db error"})
+				return
+			}
+
+			existingImagePath := strings.TrimSpace(existing.ImagePath)
 
 			updateSet := bson.M{}
 			updateUnset := bson.M{}
@@ -405,6 +422,15 @@ func UpdateProduct(db *mongo.Database) gin.HandlerFunc {
 					return
 				}
 				updateSet["price"] = input.Price
+			}
+			if input.SaleEnabledSet {
+				updateSet["saleEnabled"] = input.SaleEnabled
+				if !input.SaleEnabled {
+					updateSet["salePrice"] = 0
+				}
+			}
+			if input.SalePriceSet {
+				updateSet["salePrice"] = input.SalePrice
 			}
 			if input.CategoryIDSet {
 				categoryNames, err := resolveCategoryNamesByIDs(context.Background(), db, input.CategoryIDs)
@@ -457,6 +483,28 @@ func UpdateProduct(db *mongo.Database) gin.HandlerFunc {
 				mapKeys(updateSet),
 				mapKeys(updateUnset),
 			)
+
+			finalPrice := input.Price
+			if !input.PriceSet {
+				finalPrice = existing.Price
+			}
+			finalSaleEnabled := existing.SaleEnabled
+			if input.SaleEnabledSet {
+				finalSaleEnabled = input.SaleEnabled
+			}
+			finalSalePrice := existing.SalePrice
+			finalSalePriceSet := existing.SalePrice > 0
+			if input.SalePriceSet {
+				finalSalePrice = input.SalePrice
+				finalSalePriceSet = true
+			}
+			if finalSaleEnabled && !finalSalePriceSet {
+				finalSalePrice = 0
+			}
+			if err := validateSaleFields(finalPrice, finalSaleEnabled, finalSalePrice, finalSalePriceSet); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
 
 			if len(updateSet) == 0 && len(updateUnset) == 0 {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "no fields to update"})
@@ -528,6 +576,7 @@ func UpdateProduct(db *mongo.Database) gin.HandlerFunc {
 			}
 
 			updated.InStock = updated.Stock > 0
+			updated.IsOnSale = isProductOnSale(updated.Price, updated.SaleEnabled, updated.SalePrice)
 			c.JSON(http.StatusOK, updated)
 			return
 		}
@@ -553,6 +602,12 @@ func UpdateProduct(db *mongo.Database) gin.HandlerFunc {
 			if _, ok := val.(bool); !ok {
 				log.Println("UpdateProduct RETURN 400:", "isCampaign must be boolean")
 				c.JSON(http.StatusBadRequest, gin.H{"error": "isCampaign must be boolean"})
+				return
+			}
+		}
+		if val, ok := raw["saleEnabled"]; ok {
+			if _, ok := val.(bool); !ok {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "saleEnabled must be boolean"})
 				return
 			}
 		}
@@ -600,6 +655,15 @@ func UpdateProduct(db *mongo.Database) gin.HandlerFunc {
 				return
 			}
 			updateSet["price"] = *req.Price
+		}
+		if req.SaleEnabled != nil {
+			updateSet["saleEnabled"] = *req.SaleEnabled
+			if !*req.SaleEnabled {
+				updateSet["salePrice"] = 0
+			}
+		}
+		if req.SalePrice != nil {
+			updateSet["salePrice"] = *req.SalePrice
 		}
 		if req.CategoryIDs != nil {
 			categoryNames, err := resolveCategoryNamesByIDs(context.Background(), db, *req.CategoryIDs)
@@ -651,6 +715,50 @@ func UpdateProduct(db *mongo.Database) gin.HandlerFunc {
 			mapKeys(updateSet),
 			mapKeys(updateUnset),
 		)
+
+		finalPrice := 0.0
+		if req.Price != nil {
+			finalPrice = *req.Price
+		}
+		finalSaleEnabled := false
+		finalSalePrice := 0.0
+		finalSalePriceSet := false
+		if req.Price != nil || req.SaleEnabled != nil || req.SalePrice != nil {
+			var existing models.Product
+			err := db.Collection("products").FindOne(
+				context.Background(),
+				bson.M{"_id": id, "isDeleted": bson.M{"$ne": true}},
+			).Decode(&existing)
+			if err == mongo.ErrNoDocuments {
+				c.JSON(http.StatusNotFound, gin.H{"error": "product not found"})
+				return
+			}
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "db error"})
+				return
+			}
+
+			if req.Price == nil {
+				finalPrice = existing.Price
+			}
+			finalSaleEnabled = existing.SaleEnabled
+			if req.SaleEnabled != nil {
+				finalSaleEnabled = *req.SaleEnabled
+			}
+			finalSalePrice = existing.SalePrice
+			finalSalePriceSet = existing.SalePrice > 0
+			if req.SalePrice != nil {
+				finalSalePrice = *req.SalePrice
+				finalSalePriceSet = true
+			}
+		}
+		if req.SaleEnabled != nil && *req.SaleEnabled && req.SalePrice == nil && !finalSalePriceSet {
+			finalSalePrice = 0
+		}
+		if err := validateSaleFields(finalPrice, finalSaleEnabled, finalSalePrice, finalSalePriceSet); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 
 		if len(updateSet) == 0 && len(updateUnset) == 0 {
 			log.Println("UpdateProduct RETURN 400:", "no fields to update")
@@ -719,6 +827,7 @@ func UpdateProduct(db *mongo.Database) gin.HandlerFunc {
 		}
 
 		updated.InStock = updated.Stock > 0
+		updated.IsOnSale = isProductOnSale(updated.Price, updated.SaleEnabled, updated.SalePrice)
 		c.JSON(http.StatusOK, updated)
 	}
 }
