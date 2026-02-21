@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 
 	"go.mongodb.org/mongo-driver/bson"
@@ -40,6 +42,33 @@ func TestNormalizeProductDocumentIncludesSaleFields(t *testing.T) {
 	}
 	if !product.IsOnSale {
 		t.Fatal("expected IsOnSale to be true")
+	}
+}
+
+func TestProductJSONAlwaysIncludesSalePrice(t *testing.T) {
+	product, err := normalizeProductDocument(bson.M{
+		"name":        "Test",
+		"price":       120.0,
+		"saleEnabled": true,
+		"salePrice":   99.0,
+		"stock":       10,
+		"category":    []string{"Meyve"},
+	})
+	if err != nil {
+		t.Fatalf("normalizeProductDocument returned error: %v", err)
+	}
+
+	body, err := json.Marshal(product)
+	if err != nil {
+		t.Fatalf("json marshal failed: %v", err)
+	}
+
+	jsonBody := string(body)
+	if !strings.Contains(jsonBody, "\"salePrice\":99") {
+		t.Fatalf("expected salePrice in response json, got %s", jsonBody)
+	}
+	if !strings.Contains(jsonBody, "\"isOnSale\":true") {
+		t.Fatalf("expected isOnSale=true in response json, got %s", jsonBody)
 	}
 }
 
