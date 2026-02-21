@@ -1,6 +1,7 @@
 requireAuth();
 
 let selectedProduct = null;
+let currentEditProductId = "";
 let currentProducts = [];
 let cachedCategories = [];
 let currentPage = 1;
@@ -249,15 +250,46 @@ function renderProductsTable(data) {
 
   data.forEach((p) => {
     const tr = document.createElement("tr");
+    const productId = getId(p);
+    const productPayload = encodeURIComponent(JSON.stringify({
+      id: productId,
+      name: p.name || "",
+      price: p.price ?? "",
+      saleEnabled: parseBooleanValue(p.saleEnabled),
+      salePrice: p.salePrice ?? "",
+      brand: p.brand || "",
+      barcode: p.barcode || "",
+      stock: p.stock ?? "",
+      description: p.description || "",
+      isActive: parseBooleanValue(p.isActive),
+      isCampaign: parseBooleanValue(p.isCampaign),
+      category: p.category,
+      imagePath: p.imagePath || ""
+    }));
+
     tr.innerHTML = `
       <td>${p.name || "-"}</td>
       <td>${p.brand || "-"}</td>
       <td>${p.barcode || "-"}</td>
       <td>${Number.isFinite(Number(p.stock)) ? Number(p.stock) : "-"}</td>
-      <td>${p.isCampaign ? "Evet" : "Hayır"}</td>
-      <td><button type="button" class="small">Düzenle</button></td>
+      <td>${parseBooleanValue(p.isCampaign) ? "Evet" : "Hayır"}</td>
+      <td><button type="button" class="small" data-product-id="${productId || ""}" data-product="${productPayload}">Düzenle</button></td>
     `;
-    tr.querySelector("button").onclick = () => selectProduct(p);
+
+    tr.querySelector("button").onclick = (event) => {
+      const payload = event.currentTarget?.dataset?.product;
+      if (!payload) {
+        selectProduct(p);
+        return;
+      }
+
+      try {
+        selectProduct(JSON.parse(decodeURIComponent(payload)));
+      } catch (error) {
+        console.error("Ürün datası parse edilemedi, fallback kullanılıyor:", error);
+        selectProduct(p);
+      }
+    };
     tbody.appendChild(tr);
   });
 }
@@ -366,6 +398,16 @@ function setSalePriceVisibility(formEl, enabled) {
   }
 }
 
+function parseBooleanValue(value) {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value === 1;
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    return normalized === "true" || normalized === "1";
+  }
+  return false;
+}
+
 function resetSaleFields(formEl) {
   if (!formEl || !formEl.elements?.saleEnabled || !formEl.elements?.salePrice) return;
   formEl.elements.saleEnabled.checked = false;
@@ -375,7 +417,7 @@ function resetSaleFields(formEl) {
 
 function hydrateSaleFields(formEl, product) {
   if (!formEl || !formEl.elements?.saleEnabled || !formEl.elements?.salePrice) return;
-  const saleEnabled = !!product?.saleEnabled;
+  const saleEnabled = parseBooleanValue(product?.saleEnabled);
   formEl.elements.saleEnabled.checked = saleEnabled;
   if (!saleEnabled) {
     formEl.elements.salePrice.value = "";
@@ -491,6 +533,7 @@ async function loadProducts(page = 1) {
 function selectProduct(product) {
   selectedProduct = product;
   const id = getId(product);
+  currentEditProductId = id ? String(id) : "";
 
   el("editProduct").style.display = "grid";
   const deleteButton = el("deleteProduct");
@@ -505,6 +548,7 @@ function selectProduct(product) {
 
   form.reset();
   resetSaleFields(form);
+  form.elements.productId.value = currentEditProductId;
 
   form.elements.name.value = product.name || "";
   form.elements.price.value = (product.price ?? "");
@@ -513,8 +557,8 @@ function selectProduct(product) {
   form.elements.barcode.value = product.barcode || "";
   form.elements.stock.value = (product.stock ?? "");
   form.elements.description.value = product.description || "";
-  form.elements.isActive.checked = !!product.isActive;
-  form.elements.isCampaign.checked = !!product.isCampaign;
+  form.elements.isActive.checked = parseBooleanValue(product.isActive);
+  form.elements.isCampaign.checked = parseBooleanValue(product.isCampaign);
 
   // Ürün kategorileri (legacy: isim listesi olabilir)
   const selectedCategories = normalizeCategoryValues(product.category);
@@ -567,6 +611,7 @@ async function handleDeleteProduct(product) {
 
   if (selectedProduct && getId(selectedProduct) === id) {
     selectedProduct = null;
+    currentEditProductId = "";
     el("editProduct").style.display = "none";
   }
 
@@ -664,12 +709,10 @@ el("addProduct")?.addEventListener("submit", async function(event) {
 
 el("editProduct")?.addEventListener("submit", async function(event) {
   event.preventDefault();
-  if (!selectedProduct) return;
-
-  const id = getId(selectedProduct);
-  if (!id) return alert("Ürün id yok");
 
   const formEl = event.target;
+  const id = String(formEl.elements.productId.value || currentEditProductId || "").trim();
+  if (!id) return alert("Ürün id yok");
   const fd = new FormData();
   fd.set("name", formEl.elements.name.value || "");
   fd.set("price", formEl.elements.price.value || "");
@@ -738,8 +781,13 @@ el("editProduct")?.addEventListener("submit", async function(event) {
 });
 
 el("deleteProduct")?.addEventListener("click", async function() {
-  if (!selectedProduct) return;
-  await handleDeleteProduct(selectedProduct);
+  const id = String(el("editProduct")?.elements?.productId?.value || currentEditProductId || "").trim();
+  if (!id) return;
+
+  const product = currentProducts.find(item => String(getId(item) || "") === id) || selectedProduct;
+  if (!product) return;
+
+  await handleDeleteProduct(product);
 });
 
 async function init() {
