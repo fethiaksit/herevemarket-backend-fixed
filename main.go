@@ -75,6 +75,10 @@ func main() {
 		user.POST("/addresses", handlers.CreateUserAddress(db))
 		user.PUT("/addresses/:id", handlers.UpdateUserAddress(db))
 		user.DELETE("/addresses/:id", handlers.DeleteUserAddress(db))
+
+		user.GET("/favorites", handlers.GetUserFavorites(db))
+		user.POST("/favorites", handlers.AddUserFavorite(db))
+		user.DELETE("/favorites/:productId", handlers.DeleteUserFavorite(db))
 	}
 
 	admin := r.Group("/admin/api")

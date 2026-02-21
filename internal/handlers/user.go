@@ -24,6 +24,10 @@ type addressRequest struct {
 	IsDefault bool   `json:"isDefault"`
 }
 
+type favoriteRequest struct {
+	ProductID string `json:"productId" binding:"required"`
+}
+
 func GetMe(db *mongo.Database) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		userID, ok := c.Get("userId")
@@ -292,5 +296,163 @@ func DeleteUserAddress(db *mongo.Database) gin.HandlerFunc {
 
 		log.Println("[ADDRESS] [INFO] address deleted:", addressID)
 		c.JSON(http.StatusOK, gin.H{"message": "address deleted"})
+	}
+}
+
+func GetUserFavorites(db *mongo.Database) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		userIDValue, ok := c.Get("userId")
+		if !ok {
+			log.Println("[FAVORITE] [ERROR] userId missing in context")
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+			return
+		}
+		userID := userIDValue.(primitive.ObjectID)
+
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+		defer cancel()
+
+		var user models.User
+		if err := db.Collection("users").FindOne(ctx, bson.M{"_id": userID}).Decode(&user); err != nil {
+			log.Println("[FAVORITE] [ERROR] get favorites failed:", err)
+			c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+			return
+		}
+
+		if len(user.Favorites) == 0 {
+			c.JSON(http.StatusOK, gin.H{"data": []models.Product{}})
+			return
+		}
+
+		cursor, err := db.Collection("products").Find(ctx, bson.M{
+			"_id":       bson.M{"$in": user.Favorites},
+			"isDeleted": bson.M{"$ne": true},
+		})
+		if err != nil {
+			log.Println("[FAVORITE] [ERROR] list favorites products failed:", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "db error"})
+			return
+		}
+		defer cursor.Close(ctx)
+
+		products := make([]models.Product, 0, len(user.Favorites))
+		if err := cursor.All(ctx, &products); err != nil {
+			log.Println("[FAVORITE] [ERROR] decode favorites products failed:", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "db error"})
+			return
+		}
+
+		productByID := make(map[primitive.ObjectID]models.Product, len(products))
+		for _, product := range products {
+			productByID[product.ID] = product
+		}
+
+		ordered := make([]models.Product, 0, len(products))
+		for _, favoriteID := range user.Favorites {
+			if product, exists := productByID[favoriteID]; exists {
+				ordered = append(ordered, product)
+			}
+		}
+
+		c.JSON(http.StatusOK, gin.H{"data": ordered})
+	}
+}
+
+func AddUserFavorite(db *mongo.Database) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		userIDValue, ok := c.Get("userId")
+		if !ok {
+			log.Println("[FAVORITE] [ERROR] userId missing in context")
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+			return
+		}
+		userID := userIDValue.(primitive.ObjectID)
+
+		var req favoriteRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			log.Println("[FAVORITE] [ERROR] invalid favorite body:", err)
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+			return
+		}
+
+		productID, err := primitive.ObjectIDFromHex(strings.TrimSpace(req.ProductID))
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid productId"})
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+		defer cancel()
+
+		if err := db.Collection("products").FindOne(ctx, bson.M{
+			"_id":       productID,
+			"isDeleted": bson.M{"$ne": true},
+		}).Err(); err != nil {
+			if err == mongo.ErrNoDocuments {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid productId"})
+				return
+			}
+			log.Println("[FAVORITE] [ERROR] product lookup failed:", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "db error"})
+			return
+		}
+
+		_, err = db.Collection("users").UpdateByID(ctx, userID, bson.M{
+			"$addToSet": bson.M{"favorites": productID},
+			"$set":      bson.M{"updatedAt": time.Now()},
+		})
+		if err != nil {
+			log.Println("[FAVORITE] [ERROR] add favorite failed:", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "db error"})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{"message": "favorite updated"})
+	}
+}
+
+func DeleteUserFavorite(db *mongo.Database) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		userIDValue, ok := c.Get("userId")
+		if !ok {
+			log.Println("[FAVORITE] [ERROR] userId missing in context")
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+			return
+		}
+		userID := userIDValue.(primitive.ObjectID)
+
+		productID, err := primitive.ObjectIDFromHex(strings.TrimSpace(c.Param("productId")))
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid productId"})
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+		defer cancel()
+
+		if err := db.Collection("products").FindOne(ctx, bson.M{
+			"_id":       productID,
+			"isDeleted": bson.M{"$ne": true},
+		}).Err(); err != nil {
+			if err == mongo.ErrNoDocuments {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid productId"})
+				return
+			}
+			log.Println("[FAVORITE] [ERROR] product lookup failed:", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "db error"})
+			return
+		}
+
+		_, err = db.Collection("users").UpdateByID(ctx, userID, bson.M{
+			"$pull": bson.M{"favorites": productID},
+			"$set":  bson.M{"updatedAt": time.Now()},
+		})
+		if err != nil {
+			log.Println("[FAVORITE] [ERROR] remove favorite failed:", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "db error"})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{"message": "favorite updated"})
 	}
 }
