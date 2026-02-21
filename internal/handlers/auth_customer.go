@@ -482,10 +482,11 @@ type issuedTokens struct {
 func issueTokens(c *gin.Context, db *mongo.Database, userID primitive.ObjectID, email, role, secret string, accessTTL, refreshTTL time.Duration) (*issuedTokens, error) {
 	now := time.Now()
 	claims := jwt.MapClaims{
-		"sub":   userID.Hex(),
-		"role":  role,
-		"email": email,
-		"exp":   now.Add(accessTTL).Unix(),
+		"sub":    userID.Hex(),
+		"userId": userID.Hex(),
+		"role":   role,
+		"email":  email,
+		"exp":    now.Add(accessTTL).Unix(),
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
