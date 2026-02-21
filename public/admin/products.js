@@ -251,44 +251,17 @@ function renderProductsTable(data) {
   data.forEach((p) => {
     const tr = document.createElement("tr");
     const productId = getId(p);
-    const productPayload = encodeURIComponent(JSON.stringify({
-      id: productId,
-      name: p.name || "",
-      price: p.price ?? "",
-      saleEnabled: parseBooleanValue(p.saleEnabled),
-      salePrice: p.salePrice ?? "",
-      brand: p.brand || "",
-      barcode: p.barcode || "",
-      stock: p.stock ?? "",
-      description: p.description || "",
-      isActive: parseBooleanValue(p.isActive),
-      isCampaign: parseBooleanValue(p.isCampaign),
-      category: p.category,
-      imagePath: p.imagePath || ""
-    }));
-
     tr.innerHTML = `
       <td>${p.name || "-"}</td>
       <td>${p.brand || "-"}</td>
       <td>${p.barcode || "-"}</td>
       <td>${Number.isFinite(Number(p.stock)) ? Number(p.stock) : "-"}</td>
       <td>${parseBooleanValue(p.isCampaign) ? "Evet" : "Hayır"}</td>
-      <td><button type="button" class="small" data-product-id="${productId || ""}" data-product="${productPayload}">Düzenle</button></td>
+      <td><button type="button" class="small" data-product-id="${productId || ""}">Düzenle</button></td>
     `;
 
-    tr.querySelector("button").onclick = (event) => {
-      const payload = event.currentTarget?.dataset?.product;
-      if (!payload) {
-        selectProduct(p);
-        return;
-      }
-
-      try {
-        selectProduct(JSON.parse(decodeURIComponent(payload)));
-      } catch (error) {
-        console.error("Ürün datası parse edilemedi, fallback kullanılıyor:", error);
-        selectProduct(p);
-      }
+    tr.querySelector("button").onclick = () => {
+      openEditProductModal(productId);
     };
     tbody.appendChild(tr);
   });
@@ -583,6 +556,76 @@ function selectProduct(product) {
       preview.removeAttribute("src");
       preview.style.display = "none";
     }
+  }
+}
+
+function resetEditFormState() {
+  const form = el("editProduct");
+  if (!form) return;
+
+  form.reset();
+  currentEditProductId = "";
+  form.elements.productId.value = "";
+  resetSaleFields(form);
+  fillCategorySelect(el("editProductCategorySelect"), cachedCategories, []);
+
+  const preview = el("editProductImagePreview");
+  if (preview) {
+    preview.removeAttribute("src");
+    preview.style.display = "none";
+  }
+}
+
+async function fetchProductForEdit(productId) {
+  const res = await fetch("/admin/api/products/" + productId, {
+    headers: authHeaders()
+  });
+
+  if (handleUnauthorized(res)) return null;
+
+  const payload = await safeJson(res);
+  if (!res.ok) {
+    throw new Error(payload?.error || "Ürün getirilemedi");
+  }
+
+  return payload;
+}
+
+async function openEditProductModal(productId) {
+  const id = String(productId || "").trim();
+  if (!id) {
+    alert("Ürün id yok");
+    return;
+  }
+
+  const form = el("editProduct");
+  if (!form) return;
+
+  form.style.display = "grid";
+  const deleteButton = el("deleteProduct");
+  if (deleteButton) {
+    deleteButton.disabled = true;
+  }
+
+  selectedProduct = null;
+  resetEditFormState();
+  setStatus("Ürün detayları yükleniyor...");
+
+  try {
+    const product = await fetchProductForEdit(id);
+    if (!product) {
+      setStatus("");
+      return;
+    }
+    selectProduct(product);
+    if (deleteButton) {
+      deleteButton.disabled = false;
+    }
+    setStatus("");
+  } catch (error) {
+    console.error("Ürün detayı yüklenemedi:", error);
+    setStatus("Hata: ürün detayı getirilemedi");
+    alert(error?.message || "Ürün detayı getirilemedi");
   }
 }
 
