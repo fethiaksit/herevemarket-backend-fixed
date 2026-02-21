@@ -46,6 +46,10 @@ type MultipartProductInput struct {
 	IsActiveSet    bool
 	IsCampaign     bool
 	IsCampaignSet  bool
+	SaleEnabled    bool
+	SaleEnabledSet bool
+	SalePrice      float64
+	SalePriceSet   bool
 }
 
 /*
@@ -104,6 +108,15 @@ func parseMultipartProductRequest(c *gin.Context) (MultipartProductInput, error)
 		input.StockSet = true
 	}
 
+	if value, ok := c.GetPostForm("salePrice"); ok {
+		parsed, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
+		if err != nil {
+			return MultipartProductInput{}, err
+		}
+		input.SalePrice = parsed
+		input.SalePriceSet = true
+	}
+
 	// ---- BOOL FIELDS ----
 
 	if value, ok := c.GetPostForm("isActive"); ok {
@@ -131,6 +144,15 @@ func parseMultipartProductRequest(c *gin.Context) (MultipartProductInput, error)
 		}
 		input.InStock = parsed
 		input.InStockSet = true
+	}
+
+	if value, ok := c.GetPostForm("saleEnabled"); ok {
+		parsed, err := parseBoolValue(value)
+		if err != nil {
+			return MultipartProductInput{}, err
+		}
+		input.SaleEnabled = parsed
+		input.SaleEnabledSet = true
 	}
 
 	// ---- CATEGORY IDS (CRITICAL FIX) ----

@@ -44,6 +44,36 @@ func normalizeProductDocument(raw bson.M) (models.Product, error) {
 		raw["stock"] = 0
 	}
 
+	if val, ok := raw["saleEnabled"]; ok {
+		switch typed := val.(type) {
+		case bool:
+			raw["saleEnabled"] = typed
+		case string:
+			raw["saleEnabled"] = typed == "true"
+		default:
+			raw["saleEnabled"] = false
+		}
+	} else {
+		raw["saleEnabled"] = false
+	}
+
+	if val, ok := raw["salePrice"]; ok {
+		switch typed := val.(type) {
+		case int32:
+			raw["salePrice"] = float64(typed)
+		case int64:
+			raw["salePrice"] = float64(typed)
+		case float64:
+			raw["salePrice"] = typed
+		case int:
+			raw["salePrice"] = float64(typed)
+		default:
+			raw["salePrice"] = 0.0
+		}
+	} else {
+		raw["salePrice"] = 0.0
+	}
+
 	data, err := bson.Marshal(raw)
 	if err != nil {
 		return models.Product{}, err
@@ -55,6 +85,7 @@ func normalizeProductDocument(raw bson.M) (models.Product, error) {
 	}
 
 	p.InStock = p.Stock > 0
+	p.IsOnSale = isProductOnSale(p.Price, p.SaleEnabled, p.SalePrice)
 
 	return p, nil
 }

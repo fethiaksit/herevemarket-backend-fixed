@@ -10,6 +10,9 @@ type Product struct {
 	ID          primitive.ObjectID `bson:"_id,omitempty" json:"id"`
 	Name        string             `bson:"name" json:"name"`
 	Price       float64            `bson:"price" json:"price"`
+	SaleEnabled bool               `bson:"saleEnabled" json:"saleEnabled"`
+	SalePrice   float64            `bson:"salePrice,omitempty" json:"salePrice,omitempty"`
+	IsOnSale    bool               `bson:"-" json:"isOnSale"`
 	Category    StringList         `bson:"category" json:"category"`
 	Description string             `bson:"description,omitempty" json:"description,omitempty"`
 	Barcode     string             `bson:"barcode,omitempty" json:"barcode,omitempty"`
