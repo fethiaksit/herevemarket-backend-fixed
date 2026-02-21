@@ -89,6 +89,7 @@ func main() {
 		})
 
 		admin.GET("/products", handlers.GetAllProducts(db))
+		admin.GET("/products/:id", handlers.GetProductByID(db))
 		admin.POST("/products", handlers.CreateProduct(db))
 		admin.PUT("/products/:id", handlers.UpdateProduct(db))
 		admin.DELETE("/products/:id", handlers.DeleteProduct(db))

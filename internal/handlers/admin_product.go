@@ -217,6 +217,41 @@ func GetAllProducts(db *mongo.Database) gin.HandlerFunc {
 	}
 }
 
+func GetProductByID(db *mongo.Database) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		id, err := primitive.ObjectIDFromHex(c.Param("id"))
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+			return
+		}
+
+		var raw bson.M
+		err = db.Collection("products").FindOne(
+			context.Background(),
+			bson.M{
+				"_id":       id,
+				"isDeleted": bson.M{"$ne": true},
+			},
+		).Decode(&raw)
+		if err == mongo.ErrNoDocuments {
+			c.JSON(http.StatusNotFound, gin.H{"error": "product not found"})
+			return
+		}
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "db error"})
+			return
+		}
+
+		product, err := normalizeProductDocument(raw)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "decode error"})
+			return
+		}
+
+		c.JSON(http.StatusOK, product)
+	}
+}
+
 /* =======================
    CREATE
 ======================= */
