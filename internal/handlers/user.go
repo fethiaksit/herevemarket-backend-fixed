@@ -335,8 +335,8 @@ func GetUserFavorites(db *mongo.Database) gin.HandlerFunc {
 		}
 		defer cursor.Close(ctx)
 
-		products := make([]models.Product, 0, len(user.Favorites))
-		if err := cursor.All(ctx, &products); err != nil {
+		products, err := decodeProducts(ctx, cursor)
+		if err != nil {
 			log.Println("[FAVORITE] [ERROR] decode favorites products failed:", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "db error"})
 			return

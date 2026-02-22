@@ -2,12 +2,55 @@ package handlers
 
 import (
 	"context"
+	"strconv"
+	"strings"
 
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 
 	"backend/internal/models"
 )
+
+func parseLooseBool(value interface{}) bool {
+	switch typed := value.(type) {
+	case bool:
+		return typed
+	case string:
+		normalized := strings.TrimSpace(strings.ToLower(typed))
+		return normalized == "true" || normalized == "1"
+	case int:
+		return typed == 1
+	case int32:
+		return typed == 1
+	case int64:
+		return typed == 1
+	case float64:
+		return typed == 1
+	default:
+		return false
+	}
+}
+
+func parseLooseNumber(value interface{}) float64 {
+	switch typed := value.(type) {
+	case int32:
+		return float64(typed)
+	case int64:
+		return float64(typed)
+	case float64:
+		return typed
+	case int:
+		return float64(typed)
+	case string:
+		parsed, err := strconv.ParseFloat(strings.TrimSpace(typed), 64)
+		if err != nil {
+			return 0.0
+		}
+		return parsed
+	default:
+		return 0.0
+	}
+}
 
 func normalizeProductDocument(raw bson.M) (models.Product, error) {
 	if cat, ok := raw["category"].(string); ok {
@@ -45,33 +88,21 @@ func normalizeProductDocument(raw bson.M) (models.Product, error) {
 	}
 
 	if val, ok := raw["saleEnabled"]; ok {
-		switch typed := val.(type) {
-		case bool:
-			raw["saleEnabled"] = typed
-		case string:
-			raw["saleEnabled"] = typed == "true"
-		default:
-			raw["saleEnabled"] = false
-		}
+		raw["saleEnabled"] = parseLooseBool(val)
 	} else {
 		raw["saleEnabled"] = false
 	}
 
 	if val, ok := raw["salePrice"]; ok {
-		switch typed := val.(type) {
-		case int32:
-			raw["salePrice"] = float64(typed)
-		case int64:
-			raw["salePrice"] = float64(typed)
-		case float64:
-			raw["salePrice"] = typed
-		case int:
-			raw["salePrice"] = float64(typed)
-		default:
-			raw["salePrice"] = 0.0
-		}
+		raw["salePrice"] = parseLooseNumber(val)
 	} else {
 		raw["salePrice"] = 0.0
+	}
+
+	if val, ok := raw["price"]; ok {
+		raw["price"] = parseLooseNumber(val)
+	} else {
+		raw["price"] = 0.0
 	}
 
 	data, err := bson.Marshal(raw)
