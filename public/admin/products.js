@@ -2,6 +2,8 @@ requireAuth();
 
 let selectedProduct = null;
 let currentEditProductId = "";
+let lastHydratedEditProductId = "";
+let editLoadSequence = 0;
 let currentProducts = [];
 let cachedCategories = [];
 let currentPage = 1;
@@ -564,15 +566,79 @@ function resetEditFormState() {
   if (!form) return;
 
   form.reset();
+  selectedProduct = null;
   currentEditProductId = "";
+  lastHydratedEditProductId = "";
   form.elements.productId.value = "";
+  form.elements.name.value = "";
+  form.elements.price.value = "";
+  form.elements.salePrice.value = "0";
+  form.elements.brand.value = "";
+  form.elements.barcode.value = "";
+  form.elements.stock.value = "";
+  form.elements.description.value = "";
+  form.elements.isActive.checked = false;
+  form.elements.isCampaign.checked = false;
   resetSaleFields(form);
   fillCategorySelect(el("editProductCategorySelect"), cachedCategories, []);
+
+  el("prodName").innerText = "-";
+  el("prodId").innerText = "(id yok)";
 
   const preview = el("editProductImagePreview");
   if (preview) {
     preview.removeAttribute("src");
     preview.style.display = "none";
+  }
+}
+
+function mapProductToEditForm(form, product) {
+  if (!form || !product) return;
+
+  const id = String(getId(product) || "").trim();
+  selectedProduct = product;
+  currentEditProductId = id;
+  lastHydratedEditProductId = id;
+
+  const safePrice = Number(product?.price);
+  const saleEnabled = parseBooleanValue(product?.saleEnabled);
+  const salePrice = Number(product?.salePrice);
+
+  form.elements.productId.value = id;
+  form.elements.name.value = String(product?.name || "");
+  form.elements.price.value = Number.isFinite(safePrice) ? String(safePrice) : "";
+  form.elements.brand.value = String(product?.brand || "");
+  form.elements.barcode.value = String(product?.barcode || "");
+  form.elements.stock.value = Number.isFinite(Number(product?.stock)) ? String(Number(product.stock)) : "";
+  form.elements.description.value = String(product?.description || "");
+  form.elements.isActive.checked = parseBooleanValue(product?.isActive);
+  form.elements.isCampaign.checked = parseBooleanValue(product?.isCampaign);
+
+  const saleCheckbox = getSaleEnabledCheckbox(form);
+  if (saleCheckbox) {
+    saleCheckbox.checked = saleEnabled;
+  }
+  form.elements.salePrice.value = saleEnabled && Number.isFinite(salePrice) && salePrice > 0
+    ? String(salePrice)
+    : "0";
+  setSalePriceVisibility(form, saleEnabled);
+
+  const selectedCategories = normalizeCategoryValues(product?.category);
+  fillCategorySelect(el("editProductCategorySelect"), cachedCategories, selectedCategories);
+
+  el("prodName").innerText = product?.name || "-";
+  el("prodId").innerText = id ? `(id: ${id})` : "(id yok)";
+
+  const preview = el("editProductImagePreview");
+  if (preview) {
+    const imagePath = String(product?.imagePath || "").trim();
+    if (imagePath) {
+      preview.src = "/public/" + imagePath.replace(/^\/+/, "");
+      preview.style.display = "block";
+    } else {
+      preview.removeAttribute("src");
+      preview.style.display = "none";
+    }
   }
 }
 
@@ -607,22 +673,54 @@ async function openEditProductModal(productId) {
     deleteButton.disabled = true;
   }
 
-  selectedProduct = null;
+  await loadProductForEdit(id);
+}
+
+async function loadProductForEdit(productId) {
+  const id = String(productId || "").trim();
+  if (!id) {
+    resetEditFormState();
+    return;
+  }
+
+  const form = el("editProduct");
+  if (!form) return;
+
+  const currentSequence = ++editLoadSequence;
+  form.style.display = "grid";
+  currentEditProductId = id;
+  form.elements.productId.value = id;
   resetEditFormState();
+  form.elements.productId.value = id;
+
+  const deleteButton = el("deleteProduct");
+  if (deleteButton) {
+    deleteButton.disabled = true;
+  }
+
   setStatus("Ürün detayları yükleniyor...");
 
   try {
     const product = await fetchProductForEdit(id);
     if (!product) {
-      setStatus("");
+      if (currentSequence === editLoadSequence) {
+        setStatus("");
+      }
       return;
     }
-    selectProduct(product);
+    if (currentSequence !== editLoadSequence) {
+      return;
+    }
+
+    mapProductToEditForm(form, product);
     if (deleteButton) {
       deleteButton.disabled = false;
     }
     setStatus("");
   } catch (error) {
+    if (currentSequence !== editLoadSequence) {
+      return;
+    }
     console.error("Ürün detayı yüklenemedi:", error);
     setStatus("Hata: ürün detayı getirilemedi");
     alert(error?.message || "Ürün detayı getirilemedi");
@@ -842,6 +940,12 @@ el("deleteProduct")?.addEventListener("click", async function() {
   await handleDeleteProduct(product);
 });
 
+el("editProductId")?.addEventListener("change", async function(event) {
+  const nextId = String(event?.target?.value || "").trim();
+  if (!nextId || nextId === lastHydratedEditProductId) return;
+  await loadProductForEdit(nextId);
+});
+
 async function init() {
   const deleteButton = el("deleteProduct");
   if (deleteButton) {
@@ -864,6 +968,7 @@ if (document.readyState === "loading") {
 }
 window.__adminProducts = {
   init,
+  loadProductForEdit,
   loadCategories,
   loadProducts,
   fetchCategoriesPublic,

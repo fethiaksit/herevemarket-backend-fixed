@@ -26,18 +26,21 @@ import (
 ======================= */
 
 type ProductUpdateRequest struct {
-	Name        *string   `json:"name"`
-	Price       *float64  `json:"price"`
-	SaleEnabled *bool     `json:"saleEnabled"`
-	SalePrice   *float64  `json:"salePrice"`
-	CategoryIDs *[]string `json:"category_id"`
-	Description *string   `json:"description"`
-	Barcode     *string   `json:"barcode"`
-	Brand       *string   `json:"brand"`
-	Stock       *int      `json:"stock"`
-	InStock     *bool     `json:"inStock"`
-	IsActive    *bool     `json:"isActive"`
-	IsCampaign  *bool     `json:"isCampaign"`
+	// Pointer alanlar sayesinde:
+	// - nil => field istemciden hiç gelmedi (dokunma)
+	// - 0 / false => istemci açıkça bu değeri gönderdi (güncelle)
+	Name        *string   `json:"name" form:"name"`
+	Price       *float64  `json:"price" form:"price"`
+	SaleEnabled *bool     `json:"saleEnabled" form:"saleEnabled"`
+	SalePrice   *float64  `json:"salePrice" form:"salePrice"`
+	CategoryIDs *[]string `json:"category_id" form:"category_id"`
+	Description *string   `json:"description" form:"description"`
+	Barcode     *string   `json:"barcode" form:"barcode"`
+	Brand       *string   `json:"brand" form:"brand"`
+	Stock       *int      `json:"stock" form:"stock"`
+	InStock     *bool     `json:"inStock" form:"inStock"`
+	IsActive    *bool     `json:"isActive" form:"isActive"`
+	IsCampaign  *bool     `json:"isCampaign" form:"isCampaign"`
 }
 
 /* =======================
