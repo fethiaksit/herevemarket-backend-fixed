@@ -96,17 +96,22 @@ func CreateOrder(db *mongo.Database, jwtSecret string) gin.HandlerFunc {
 			calculatedTotal := 0.0
 
 			for _, item := range order.Items {
-				var product models.Product
+				var rawProduct bson.M
 				err := db.Collection("products").FindOne(
 					sessCtx,
 					bson.M{
 						"_id":       item.ProductID,
 						"isDeleted": bson.M{"$ne": true},
 					},
-				).Decode(&product)
+				).Decode(&rawProduct)
 				if err == mongo.ErrNoDocuments {
 					return nil, productNotFoundError{ProductID: item.ProductID}
 				}
+				if err != nil {
+					return nil, err
+				}
+
+				product, err := normalizeProductDocument(rawProduct)
 				if err != nil {
 					return nil, err
 				}
