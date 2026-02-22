@@ -46,6 +46,7 @@ type MultipartProductInput struct {
 	IsActiveSet    bool
 	IsCampaign     bool
 	IsCampaignSet  bool
+
 	SaleEnabled    bool
 	SaleEnabledSet bool
 	SalePrice      float64
@@ -91,7 +92,8 @@ func parseMultipartProductRequest(c *gin.Context) (MultipartProductInput, error)
 	// ---- NUMBER FIELDS ----
 
 	if value, ok := c.GetPostForm("price"); ok {
-		parsed, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
+		v := strings.TrimSpace(value)
+		parsed, err := strconv.ParseFloat(v, 64)
 		if err != nil {
 			return MultipartProductInput{}, err
 		}
@@ -100,7 +102,8 @@ func parseMultipartProductRequest(c *gin.Context) (MultipartProductInput, error)
 	}
 
 	if value, ok := c.GetPostForm("stock"); ok {
-		parsed, err := strconv.Atoi(strings.TrimSpace(value))
+		v := strings.TrimSpace(value)
+		parsed, err := strconv.Atoi(v)
 		if err != nil {
 			return MultipartProductInput{}, err
 		}
@@ -108,13 +111,20 @@ func parseMultipartProductRequest(c *gin.Context) (MultipartProductInput, error)
 		input.StockSet = true
 	}
 
+	// ✅ salePrice: boş gelebilir -> 0 kabul et
 	if value, ok := getPostFormAny(c, "salePrice", "sale_price"); ok {
-		parsed, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
-		if err != nil {
-			return MultipartProductInput{}, err
+		v := strings.TrimSpace(value)
+		if v == "" {
+			input.SalePrice = 0
+			input.SalePriceSet = true
+		} else {
+			parsed, err := strconv.ParseFloat(v, 64)
+			if err != nil {
+				return MultipartProductInput{}, err
+			}
+			input.SalePrice = parsed
+			input.SalePriceSet = true
 		}
-		input.SalePrice = parsed
-		input.SalePriceSet = true
 	}
 
 	// ---- BOOL FIELDS ----
@@ -155,16 +165,24 @@ func parseMultipartProductRequest(c *gin.Context) (MultipartProductInput, error)
 		input.SaleEnabledSet = true
 	}
 
-	// ---- CATEGORY IDS (CRITICAL FIX) ----
-
+	// ---- CATEGORY IDS ----
 	categoryIDs := c.PostFormArray("category_id")
 	if len(categoryIDs) > 0 {
-		input.CategoryIDs = categoryIDs
-		input.CategoryIDSet = true
+		// trim + boşları at
+		clean := make([]string, 0, len(categoryIDs))
+		for _, v := range categoryIDs {
+			vv := strings.TrimSpace(v)
+			if vv != "" {
+				clean = append(clean, vv)
+			}
+		}
+		if len(clean) > 0 {
+			input.CategoryIDs = clean
+			input.CategoryIDSet = true
+		}
 	}
 
 	// ---- IMAGE FILE ----
-
 	file, err := c.FormFile("image")
 	if err == nil {
 		imagePath, err := saveImage(file)
@@ -176,7 +194,8 @@ func parseMultipartProductRequest(c *gin.Context) (MultipartProductInput, error)
 	} else {
 		// toleranslı hata kontrolü (Gin sürümleri farkı)
 		if !errors.Is(err, http.ErrMissingFile) &&
-			!strings.Contains(err.Error(), "no such file") {
+			!strings.Contains(strings.ToLower(err.Error()), "no such file") &&
+			!strings.Contains(strings.ToLower(err.Error()), "missing file") {
 			return MultipartProductInput{}, err
 		}
 	}
@@ -257,6 +276,8 @@ func parseBoolValue(value string) (bool, error) {
 	return strconv.ParseBool(value)
 }
 
+// Çoklu aynı key gelirse en sondaki anlamlı değeri alır.
+// Not: bazı durumlarda "" döndürebilir ama ok=true olur (hidden input yüzünden).
 func getPostFormAny(c *gin.Context, keys ...string) (string, bool) {
 	for _, key := range keys {
 		values := c.PostFormArray(key)
@@ -270,6 +291,7 @@ func getPostFormAny(c *gin.Context, keys ...string) (string, bool) {
 			}
 			return value, true
 		}
+		// key vardı ama hepsi boştu
 		return "", true
 	}
 	return "", false

@@ -32,7 +32,6 @@ function getCategoryId(category) {
 }
 
 function parseCategoriesPayload(payload) {
-  // /categories -> array bekliyoruz ama tolerant dursun
   const data = Array.isArray(payload)
     ? payload
     : (payload && payload.data) ? payload.data : [];
@@ -69,8 +68,7 @@ function assertSelectExists(selectId, nameAttrExpected) {
   }
   if (nameAttrExpected && selectEl.getAttribute("name") !== nameAttrExpected) {
     console.warn(
-      `[ADMIN PRODUCTS] #${selectId} name="${selectEl.getAttribute("name")}" beklenen "${nameAttrExpected}" değildi. ` +
-      `Form submit seçimlerinde querySelector('select[name="${nameAttrExpected}"]') kullandığın için bu önemli.`
+      `[ADMIN PRODUCTS] #${selectId} name="${selectEl.getAttribute("name")}" beklenen "${nameAttrExpected}" değildi.`
     );
   }
   return selectEl;
@@ -82,7 +80,6 @@ function fillCategorySelect(selectEl, categories, selectedValues) {
   const preserved = Array.isArray(selectedValues) ? selectedValues : [];
   const preservedSet = new Set(preserved);
 
-  // "Sadece aktif" istiyorsun => isActive false olanları at
   const activeCategories = (categories || []).filter(c => c && c.isActive !== false);
 
   selectEl.innerHTML = "";
@@ -107,15 +104,12 @@ function fillCategorySelect(selectEl, categories, selectedValues) {
 
   activeCategories.forEach(cat => {
     const id = getCategoryId(cat);
-    if (!id) {
-      console.warn("Kategori id bulunamadı:", cat);
-      return;
-    }
+    if (!id) return;
+
     const opt = document.createElement("option");
-    opt.value = id;          // ✅ value her zaman id
+    opt.value = id;
     opt.textContent = cat.name;
 
-    // preserved listesi ürünlerde eski sistemden name gelebilir; onu da seçilebilir tut
     if (preservedSet.has(id) || preservedSet.has(cat.name)) {
       opt.selected = true;
     }
@@ -132,11 +126,61 @@ async function safeJson(res) {
   }
 }
 
+// ---------- Discount UI ----------
+function parseBooleanValue(value) {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value === 1;
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    return normalized === "true" || normalized === "1";
+  }
+  return false;
+}
+
+function getSaleEnabledCheckbox(formEl) {
+  if (!formEl) return null;
+  return formEl.querySelector('input[type="checkbox"][name="saleEnabled"]');
+}
+
+function setSalePriceVisibility(formEl, enabled) {
+  if (!formEl || !formEl.elements?.salePrice) return;
+  const salePriceInput = formEl.elements.salePrice;
+  const salePriceLabel = salePriceInput.previousElementSibling;
+
+  salePriceInput.disabled = !enabled;
+  salePriceInput.style.display = enabled ? "" : "none";
+
+  if (salePriceLabel && salePriceLabel.tagName === "LABEL") {
+    salePriceLabel.style.display = enabled ? "" : "none";
+  }
+}
+
+function resetSaleFields(formEl) {
+  const saleCheckbox = getSaleEnabledCheckbox(formEl);
+  if (!formEl || !saleCheckbox || !formEl.elements?.salePrice) return;
+  saleCheckbox.checked = false;
+  formEl.elements.salePrice.value = ""; // ✅ UI’da 0 gösterme
+  setSalePriceVisibility(formEl, false);
+}
+
+function bindSaleToggle(formEl) {
+  const saleCheckbox = getSaleEnabledCheckbox(formEl);
+  if (!formEl || !saleCheckbox || !formEl.elements?.salePrice) return;
+
+  saleCheckbox.addEventListener("change", () => {
+    const enabled = !!saleCheckbox.checked;
+    setSalePriceVisibility(formEl, enabled);
+    if (!enabled) {
+      formEl.elements.salePrice.value = "";
+      return;
+    }
+    formEl.elements.salePrice.focus();
+  });
+}
+
 // ---------- Categories ----------
 async function fetchCategoriesPublic() {
-  const url = isDev
-    ? "/categories" // dev'de aynı origin proxy varsa
-    : "https://api.herevemarket.com/categories"; // prod kesin
+  const url = isDev ? "/categories" : "https://api.herevemarket.com/categories";
 
   try {
     const res = await fetch(url, { cache: "no-store" });
@@ -144,17 +188,8 @@ async function fetchCategoriesPublic() {
 
     if (!res.ok) {
       console.error("Kategori isteği başarısız:", res.status, payload);
-      try {
-        const rawBody = await res.text();
-        if (rawBody) {
-          console.error("Kategori isteği ham cevap:", rawBody);
-        }
-      } catch (error) {
-        console.error("Kategori isteği ham cevap okunamadı:", error);
-      }
       return [];
     }
-
     return parseCategoriesPayload(payload);
   } catch (error) {
     console.error("Kategori isteği hata verdi:", error);
@@ -167,40 +202,26 @@ async function loadCategories() {
 
   if (!cachedCategories.length) {
     setCategoryStatus("Kategori bulunamadı. ( /categories boş dönüyor olabilir )");
-    console.warn("Kategori listesi boş döndü.");
   } else {
     setCategoryStatus("");
   }
-
-  console.debug("[ADMIN PRODUCTS] categories loaded:", cachedCategories.length, cachedCategories[0]);
 
   // Filter
   const filterSelect = el("categoryFilter");
   if (filterSelect && filterSelect.tagName === "SELECT") {
     const preserved = filterSelect.value || "";
-
     filterSelect.innerHTML = "";
+
     const def = document.createElement("option");
     def.value = "";
     def.textContent = "Tüm Kategoriler";
     filterSelect.appendChild(def);
 
-    if (cachedCategories.length === 0) {
-      const empty = document.createElement("option");
-      empty.value = "";
-      empty.textContent = "Kategori bulunamadı";
-      empty.disabled = true;
-      filterSelect.appendChild(empty);
-    }
-
     cachedCategories.forEach(cat => {
       const id = getCategoryId(cat);
-      if (!id) {
-        console.warn("Kategori id bulunamadı:", cat);
-        return;
-      }
+      if (!id) return;
       const opt = document.createElement("option");
-      opt.value = id;        // ✅ filtrede value=id
+      opt.value = id;
       opt.textContent = cat.name;
       filterSelect.appendChild(opt);
     });
@@ -212,61 +233,21 @@ async function loadCategories() {
   // Add/Edit selects
   const addSel = assertSelectExists("addProductCategorySelect", "category_id");
   const editSel = assertSelectExists("editProductCategorySelect", "category_id");
-  const addSelectCount = document.querySelectorAll("#addProductCategorySelect").length;
-  if (addSelectCount > 1) {
-    console.error(`[ADMIN PRODUCTS] Duplicate id bulundu: #addProductCategorySelect (${addSelectCount})`);
-  }
 
   fillCategorySelect(addSel, cachedCategories, []);
   fillCategorySelect(editSel, cachedCategories, []);
-
-  if (cachedCategories.length > 0 && addSel) {
-    const expectedMinOptions = 2; // placeholder + en az 1 kategori
-    if (addSel.options.length < expectedMinOptions) {
-      console.error(
-        "[ADMIN PRODUCTS] Kategori select doldurulamadı.",
-        {
-          selectId: "addProductCategorySelect",
-          selectHtml: addSel.outerHTML,
-          cachedCategoriesCount: cachedCategories.length,
-          sampleCategory: cachedCategories[0]
-        }
-      );
-    }
-  }
 }
 
-// ---------- Products ----------
-function renderProductsTable(data) {
-  const tbody = document.querySelector("#productList tbody");
-  if (!tbody) return;
-  tbody.innerHTML = "";
+// ---------- Products List ----------
+function setSearchStatus(message) {
+  const node = el("productSearchStatus");
+  if (node) node.textContent = message || "";
+}
 
-  const searchValue = (el("productSearch")?.value || "").trim();
-  if (!Array.isArray(data) || data.length === 0) {
-    const tr = document.createElement("tr");
-    tr.innerHTML = `<td class="muted" colspan="6">${searchValue ? "Sonuç bulunamadı" : "Ürün yok"}</td>`;
-    tbody.appendChild(tr);
-    return;
-  }
-
-  data.forEach((p) => {
-    const tr = document.createElement("tr");
-    const productId = getId(p);
-    tr.innerHTML = `
-      <td>${p.name || "-"}</td>
-      <td>${p.brand || "-"}</td>
-      <td>${p.barcode || "-"}</td>
-      <td>${Number.isFinite(Number(p.stock)) ? Number(p.stock) : "-"}</td>
-      <td>${parseBooleanValue(p.isCampaign) ? "Evet" : "Hayır"}</td>
-      <td><button type="button" class="small" data-product-id="${productId || ""}">Düzenle</button></td>
-    `;
-
-    tr.querySelector("button").onclick = () => {
-      openEditProductModal(productId);
-    };
-    tbody.appendChild(tr);
-  });
+function scheduleProductSearch() {
+  if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
+  setSearchStatus("Aranıyor…");
+  searchDebounceTimer = setTimeout(() => loadProducts(1), 400);
 }
 
 function ensurePaginationContainer() {
@@ -330,9 +311,7 @@ function renderPagination() {
 
   limitSelect.addEventListener("change", (event) => {
     const nextLimit = Number(event.target.value);
-    if (!Number.isNaN(nextLimit)) {
-      pageLimit = nextLimit;
-    }
+    if (!Number.isNaN(nextLimit)) pageLimit = nextLimit;
     loadProducts(1);
   });
 
@@ -344,86 +323,35 @@ function renderPagination() {
   container.appendChild(limitWrap);
 }
 
-function setSearchStatus(message) {
-  const node = el("productSearchStatus");
-  if (node) {
-    node.textContent = message || "";
-  }
-}
+function renderProductsTable(data) {
+  const tbody = document.querySelector("#productList tbody");
+  if (!tbody) return;
 
-function scheduleProductSearch() {
-  if (searchDebounceTimer) {
-    clearTimeout(searchDebounceTimer);
-  }
+  tbody.innerHTML = "";
 
-  setSearchStatus("Aranıyor…");
-  searchDebounceTimer = setTimeout(() => {
-    loadProducts(1);
-  }, 400);
-}
-
-function setSalePriceVisibility(formEl, enabled) {
-  if (!formEl || !formEl.elements?.salePrice) return;
-  const salePriceInput = formEl.elements.salePrice;
-  const salePriceLabel = salePriceInput.previousElementSibling;
-  salePriceInput.disabled = !enabled;
-  salePriceInput.style.display = enabled ? "" : "none";
-  if (salePriceLabel && salePriceLabel.tagName === "LABEL") {
-    salePriceLabel.style.display = enabled ? "" : "none";
-  }
-}
-
-function parseBooleanValue(value) {
-  if (typeof value === "boolean") return value;
-  if (typeof value === "number") return value === 1;
-  if (typeof value === "string") {
-    const normalized = value.trim().toLowerCase();
-    return normalized === "true" || normalized === "1";
-  }
-  return false;
-}
-
-
-function getSaleEnabledCheckbox(formEl) {
-  if (!formEl) return null;
-  return formEl.querySelector('input[type="checkbox"][name="saleEnabled"]');
-}
-
-function resetSaleFields(formEl) {
-  const saleCheckbox = getSaleEnabledCheckbox(formEl);
-  if (!formEl || !saleCheckbox || !formEl.elements?.salePrice) return;
-  saleCheckbox.checked = false;
-  formEl.elements.salePrice.value = "";
-  setSalePriceVisibility(formEl, false);
-}
-
-function hydrateSaleFields(formEl, product) {
-  const saleCheckbox = getSaleEnabledCheckbox(formEl);
-  if (!formEl || !saleCheckbox || !formEl.elements?.salePrice) return;
-  const saleEnabled = parseBooleanValue(product?.saleEnabled);
-  saleCheckbox.checked = saleEnabled;
-  if (!saleEnabled) {
-    formEl.elements.salePrice.value = "";
-    setSalePriceVisibility(formEl, false);
+  const searchValue = (el("productSearch")?.value || "").trim();
+  if (!Array.isArray(data) || data.length === 0) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td class="muted" colspan="6">${searchValue ? "Sonuç bulunamadı" : "Ürün yok"}</td>`;
+    tbody.appendChild(tr);
     return;
   }
 
-  const salePrice = Number(product?.salePrice);
-  formEl.elements.salePrice.value = Number.isFinite(salePrice) && salePrice > 0 ? String(salePrice) : "";
-  setSalePriceVisibility(formEl, true);
-}
+  data.forEach((p) => {
+    const tr = document.createElement("tr");
+    const productId = getId(p);
 
-function bindSaleToggle(formEl) {
-  const saleCheckbox = getSaleEnabledCheckbox(formEl);
-  if (!formEl || !saleCheckbox || !formEl.elements?.salePrice) return;
-  saleCheckbox.addEventListener("change", () => {
-    const enabled = !!saleCheckbox.checked;
-    setSalePriceVisibility(formEl, enabled);
-    if (!enabled) {
-      formEl.elements.salePrice.value = "";
-      return;
-    }
-    formEl.elements.salePrice.focus();
+    tr.innerHTML = `
+      <td>${p.name || "-"}</td>
+      <td>${p.brand || "-"}</td>
+      <td>${p.barcode || "-"}</td>
+      <td>${Number.isFinite(Number(p.stock)) ? Number(p.stock) : "-"}</td>
+      <td>${parseBooleanValue(p.isCampaign) ? "Evet" : "Hayır"}</td>
+      <td><button type="button" class="small" data-product-id="${productId || ""}">Düzenle</button></td>
+    `;
+
+    tr.querySelector("button").onclick = () => openEditProductModal(productId);
+    tbody.appendChild(tr);
   });
 }
 
@@ -433,26 +361,17 @@ async function loadProducts(page = 1) {
   const isActiveFilter = el("isActiveFilter");
   const params = new URLSearchParams();
 
-  // ✅ backend: category=NAME, frontend: select value=id
   if (selected) {
     const matched = cachedCategories.find(cat => getCategoryId(cat) === selected);
-    if (matched?.name) {
-      params.set("category", matched.name);
-    } else {
-      console.warn("Kategori filtresi id eşleşmedi:", selected);
-    }
+    if (matched?.name) params.set("category", matched.name);
   }
 
   const searchValue = typeof searchInput?.value === "string" ? searchInput.value.trim() : "";
-  if (searchValue) {
-    params.set("search", searchValue);
-  }
+  if (searchValue) params.set("search", searchValue);
 
   if (isActiveFilter) {
     if (isActiveFilter.type === "checkbox") {
-      if (isActiveFilter.checked) {
-        params.set("isActive", "true");
-      }
+      if (isActiveFilter.checked) params.set("isActive", "true");
     } else if (isActiveFilter.value !== "") {
       params.set("isActive", isActiveFilter.value);
     }
@@ -463,9 +382,7 @@ async function loadProducts(page = 1) {
     search: params.get("search") || "",
     isActive: params.get("isActive") || ""
   });
-  if (lastQueryKey && lastQueryKey !== queryKey && page !== 1) {
-    page = 1;
-  }
+  if (lastQueryKey && lastQueryKey !== queryKey && page !== 1) page = 1;
 
   params.set("page", String(page));
   params.set("limit", String(pageLimit));
@@ -498,6 +415,7 @@ async function loadProducts(page = 1) {
 
   currentPage = Number(pagination.page) || page;
   pageLimit = Number(pagination.limit) || pageLimit;
+
   if (!Number.isNaN(Number(pagination.totalPages))) {
     totalPages = Number(pagination.totalPages) || 1;
   } else if (!Number.isNaN(total) && total >= 0) {
@@ -514,71 +432,28 @@ async function loadProducts(page = 1) {
   setSearchStatus("");
 }
 
-function selectProduct(product) {
-  selectedProduct = product;
-  const id = getId(product);
-  currentEditProductId = id ? String(id) : "";
-
-  el("editProduct").style.display = "grid";
-  const deleteButton = el("deleteProduct");
-  if (deleteButton) {
-    deleteButton.disabled = false;
-  }
-  el("prodName").innerText = product.name || "-";
-  el("prodId").innerText = id ? ("(id: " + id + ")") : "(id yok)";
-
-  const form = el("editProduct");
-  if (!form) return;
-
-  form.reset();
-  resetSaleFields(form);
-  form.elements.productId.value = currentEditProductId;
-
-  form.elements.name.value = product.name || "";
-  form.elements.price.value = (product.price ?? "");
-  hydrateSaleFields(form, product);
-  form.elements.brand.value = product.brand || "";
-  form.elements.barcode.value = product.barcode || "";
-  form.elements.stock.value = (product.stock ?? "");
-  form.elements.description.value = product.description || "";
-  form.elements.isActive.checked = parseBooleanValue(product.isActive);
-  form.elements.isCampaign.checked = parseBooleanValue(product.isCampaign);
-
-  // Ürün kategorileri (legacy: isim listesi olabilir)
-  const selectedCategories = normalizeCategoryValues(product.category);
-  fillCategorySelect(el("editProductCategorySelect"), cachedCategories, selectedCategories);
-
-  const preview = el("editProductImagePreview");
-  if (preview) {
-    const imagePath = (product.imagePath || "").trim();
-    if (imagePath) {
-      preview.src = "/public/" + imagePath.replace(/^\/+/, "");
-      preview.style.display = "block";
-    } else {
-      preview.removeAttribute("src");
-      preview.style.display = "none";
-    }
-  }
-}
-
+// ---------- Edit Form ----------
 function resetEditFormState() {
   const form = el("editProduct");
   if (!form) return;
 
   form.reset();
+
   selectedProduct = null;
   currentEditProductId = "";
   lastHydratedEditProductId = "";
+
   form.elements.productId.value = "";
   form.elements.name.value = "";
   form.elements.price.value = "";
-  form.elements.salePrice.value = "0";
+  form.elements.salePrice.value = ""; // ✅ 0 değil
   form.elements.brand.value = "";
   form.elements.barcode.value = "";
   form.elements.stock.value = "";
   form.elements.description.value = "";
   form.elements.isActive.checked = false;
   form.elements.isCampaign.checked = false;
+
   resetSaleFields(form);
   fillCategorySelect(el("editProductCategorySelect"), cachedCategories, []);
 
@@ -615,12 +490,10 @@ function mapProductToEditForm(form, product) {
   form.elements.isCampaign.checked = parseBooleanValue(product?.isCampaign);
 
   const saleCheckbox = getSaleEnabledCheckbox(form);
-  if (saleCheckbox) {
-    saleCheckbox.checked = saleEnabled;
-  }
-  form.elements.salePrice.value = saleEnabled && Number.isFinite(salePrice) && salePrice > 0
-    ? String(salePrice)
-    : "0";
+  if (saleCheckbox) saleCheckbox.checked = saleEnabled;
+
+  form.elements.salePrice.value =
+    (saleEnabled && Number.isFinite(salePrice) && salePrice > 0) ? String(salePrice) : "";
   setSalePriceVisibility(form, saleEnabled);
 
   const selectedCategories = normalizeCategoryValues(product?.category);
@@ -650,28 +523,20 @@ async function fetchProductForEdit(productId) {
   if (handleUnauthorized(res)) return null;
 
   const payload = await safeJson(res);
-  if (!res.ok) {
-    throw new Error(payload?.error || "Ürün getirilemedi");
-  }
-
+  if (!res.ok) throw new Error(payload?.error || "Ürün getirilemedi");
   return payload;
 }
 
 async function openEditProductModal(productId) {
   const id = String(productId || "").trim();
-  if (!id) {
-    alert("Ürün id yok");
-    return;
-  }
+  if (!id) return alert("Ürün id yok");
 
   const form = el("editProduct");
   if (!form) return;
 
   form.style.display = "grid";
   const deleteButton = el("deleteProduct");
-  if (deleteButton) {
-    deleteButton.disabled = true;
-  }
+  if (deleteButton) deleteButton.disabled = true;
 
   await loadProductForEdit(id);
 }
@@ -687,46 +552,42 @@ async function loadProductForEdit(productId) {
   if (!form) return;
 
   const currentSequence = ++editLoadSequence;
+
+  // ✅ Ürün yüklemeden önce hard reset (sızıntı kesin biter)
   form.style.display = "grid";
   currentEditProductId = id;
-  form.elements.productId.value = id;
   resetEditFormState();
   form.elements.productId.value = id;
+  resetSaleFields(form);
+  setSalePriceVisibility(form, false);
+  form.elements.salePrice.value = "";
 
   const deleteButton = el("deleteProduct");
-  if (deleteButton) {
-    deleteButton.disabled = true;
-  }
+  if (deleteButton) deleteButton.disabled = true;
 
   setStatus("Ürün detayları yükleniyor...");
 
   try {
     const product = await fetchProductForEdit(id);
     if (!product) {
-      if (currentSequence === editLoadSequence) {
-        setStatus("");
-      }
+      if (currentSequence === editLoadSequence) setStatus("");
       return;
     }
-    if (currentSequence !== editLoadSequence) {
-      return;
-    }
+    if (currentSequence !== editLoadSequence) return;
 
     mapProductToEditForm(form, product);
-    if (deleteButton) {
-      deleteButton.disabled = false;
-    }
+
+    if (deleteButton) deleteButton.disabled = false;
     setStatus("");
   } catch (error) {
-    if (currentSequence !== editLoadSequence) {
-      return;
-    }
+    if (currentSequence !== editLoadSequence) return;
     console.error("Ürün detayı yüklenemedi:", error);
     setStatus("Hata: ürün detayı getirilemedi");
     alert(error?.message || "Ürün detayı getirilemedi");
   }
 }
 
+// ---------- Delete ----------
 async function handleDeleteProduct(product) {
   if (!product) return;
   const id = getId(product);
@@ -768,37 +629,32 @@ async function handleDeleteProduct(product) {
   renderProductsTable(currentProducts);
   setStatus("Ürün silindi");
 
-  const nextPage = currentProducts.length === 0 && currentPage > 1
-    ? currentPage - 1
-    : currentPage;
+  const nextPage = currentProducts.length === 0 && currentPage > 1 ? currentPage - 1 : currentPage;
   await loadProducts(nextPage);
 }
 
 // ---------- Events ----------
 el("categoryFilter")?.addEventListener("change", () => loadProducts(1));
+
 const searchFilterInput = el("productSearch") || el("searchInput");
-if (searchFilterInput) {
-  searchFilterInput.addEventListener("input", scheduleProductSearch);
-}
+if (searchFilterInput) searchFilterInput.addEventListener("input", scheduleProductSearch);
+
 el("clearProductSearch")?.addEventListener("click", () => {
   if (searchDebounceTimer) {
     clearTimeout(searchDebounceTimer);
     searchDebounceTimer = null;
   }
-
   const input = el("productSearch") || el("searchInput");
-  if (input) {
-    input.value = "";
-  }
+  if (input) input.value = "";
   setSearchStatus("");
   loadProducts(1);
 });
-const isActiveFilterEl = el("isActiveFilter");
-if (isActiveFilterEl) {
-  isActiveFilterEl.addEventListener("change", () => loadProducts(1));
-}
 
-el("addProduct")?.addEventListener("submit", async function(event) {
+const isActiveFilterEl = el("isActiveFilter");
+if (isActiveFilterEl) isActiveFilterEl.addEventListener("change", () => loadProducts(1));
+
+// ---------- Add Product ----------
+el("addProduct")?.addEventListener("submit", async function (event) {
   event.preventDefault();
 
   const formEl = event.target;
@@ -809,28 +665,28 @@ el("addProduct")?.addEventListener("submit", async function(event) {
 
   const categorySelect = formEl.querySelector('select[name="category_id"]');
   if (!categorySelect) {
-    console.error('Add form içinde select[name="category_id"] bulunamadı. HTML name yanlış.');
+    console.error('Add form içinde select[name="category_id"] bulunamadı.');
     return alert("Kategori alanı bulunamadı (HTML name='category_id' olmalı).");
   }
 
   const categories = getSelectedCategories(categorySelect);
   if (categories.length === 0) return alert("En az bir kategori seç");
 
-  // select multiple -> aynı field name'i tekrar tekrar append et
   fd.delete("category_id");
-  categories.forEach(c => fd.append("category_id", c)); // ✅ id gönder
+  categories.forEach(c => fd.append("category_id", c));
 
   fd.set("price", String(price));
+
   const saleEnabled = !!getSaleEnabledCheckbox(formEl)?.checked;
   fd.set("saleEnabled", saleEnabled ? "true" : "false");
-  const parsedPrice = Number(price);
+
   const salePriceValue = String(formEl.elements.salePrice.value || "").trim();
   if (saleEnabled) {
     if (salePriceValue === "") return alert("İndirimli fiyat giriniz");
     const salePrice = parseFloat(salePriceValue);
     if (Number.isNaN(salePrice)) return alert("İndirimli fiyat sayı olmalı");
     if (salePrice <= 0) return alert("İndirimli fiyat 0'dan büyük olmalı");
-    if (salePrice >= parsedPrice) return alert("İndirimli fiyat normal fiyattan düşük olmalı");
+    if (salePrice >= price) return alert("İndirimli fiyat normal fiyattan düşük olmalı");
     fd.set("salePrice", String(salePrice));
   } else {
     fd.set("salePrice", "0");
@@ -857,29 +713,32 @@ el("addProduct")?.addEventListener("submit", async function(event) {
   await loadProducts(currentPage);
 });
 
-el("editProduct")?.addEventListener("submit", async function(event) {
+// ---------- Edit Product ----------
+el("editProduct")?.addEventListener("submit", async function (event) {
   event.preventDefault();
 
   const formEl = event.target;
   const id = String(formEl.elements.productId.value || currentEditProductId || "").trim();
   if (!id) return alert("Ürün id yok");
+
   const fd = new FormData();
+
   fd.set("name", formEl.elements.name.value || "");
   fd.set("price", formEl.elements.price.value || "");
   fd.set("brand", formEl.elements.brand.value || "");
   fd.set("barcode", formEl.elements.barcode.value || "");
+
   const stockValue = formEl.elements.stock.value || "";
   fd.set("stock", stockValue);
+
   fd.set("description", formEl.elements.description.value || "");
-  const stockNumber = parseInt(stockValue, 10);
-  fd.set("inStock", Number.isFinite(stockNumber) ? String(stockNumber > 0) : "false");
 
   const price = parseFloat(fd.get("price"));
   if (Number.isNaN(price)) return alert("Fiyat sayı olmalı");
 
   const categorySelect = formEl.querySelector('select[name="category_id"]');
   if (!categorySelect) {
-    console.error('Edit form içinde select[name="category_id"] bulunamadı. HTML name yanlış.');
+    console.error('Edit form içinde select[name="category_id"] bulunamadı.');
     return alert("Kategori alanı bulunamadı (HTML name='category_id' olmalı).");
   }
 
@@ -887,18 +746,20 @@ el("editProduct")?.addEventListener("submit", async function(event) {
   if (categories.length === 0) return alert("En az bir kategori seç");
 
   fd.delete("category_id");
-  categories.forEach(c => fd.append("category_id", c)); // ✅ id gönder
+  categories.forEach(c => fd.append("category_id", c));
+
   fd.set("price", String(price));
+
   const saleEnabled = !!getSaleEnabledCheckbox(formEl)?.checked;
   fd.set("saleEnabled", saleEnabled ? "true" : "false");
-  const parsedPrice = Number(price);
+
   const salePriceValue = String(formEl.elements.salePrice.value || "").trim();
   if (saleEnabled) {
     if (salePriceValue === "") return alert("İndirimli fiyat giriniz");
     const salePrice = parseFloat(salePriceValue);
     if (Number.isNaN(salePrice)) return alert("İndirimli fiyat sayı olmalı");
     if (salePrice <= 0) return alert("İndirimli fiyat 0'dan büyük olmalı");
-    if (salePrice >= parsedPrice) return alert("İndirimli fiyat normal fiyattan düşük olmalı");
+    if (salePrice >= price) return alert("İndirimli fiyat normal fiyattan düşük olmalı");
     fd.set("salePrice", String(salePrice));
   } else {
     fd.set("salePrice", "0");
@@ -930,7 +791,8 @@ el("editProduct")?.addEventListener("submit", async function(event) {
   await loadProducts(currentPage);
 });
 
-el("deleteProduct")?.addEventListener("click", async function() {
+// ---------- Delete button ----------
+el("deleteProduct")?.addEventListener("click", async function () {
   const id = String(el("editProduct")?.elements?.productId?.value || currentEditProductId || "").trim();
   if (!id) return;
 
@@ -940,32 +802,34 @@ el("deleteProduct")?.addEventListener("click", async function() {
   await handleDeleteProduct(product);
 });
 
-el("editProductId")?.addEventListener("change", async function(event) {
+el("editProductId")?.addEventListener("change", async function (event) {
   const nextId = String(event?.target?.value || "").trim();
   if (!nextId || nextId === lastHydratedEditProductId) return;
   await loadProductForEdit(nextId);
 });
 
+// ---------- Init ----------
 async function init() {
   const deleteButton = el("deleteProduct");
-  if (deleteButton) {
-    deleteButton.disabled = true;
-  }
+  if (deleteButton) deleteButton.disabled = true;
+
   setSearchStatus("");
+
   resetSaleFields(el("addProduct"));
   resetSaleFields(el("editProduct"));
   bindSaleToggle(el("addProduct"));
   bindSaleToggle(el("editProduct"));
+
   await loadCategories();
   await loadProducts(1);
 }
 
-// DOM hazır olmadan çalışmasın
 if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", init);
 } else {
   init();
 }
+
 window.__adminProducts = {
   init,
   loadProductForEdit,
