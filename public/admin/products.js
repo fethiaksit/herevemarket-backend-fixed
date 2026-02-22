@@ -703,7 +703,7 @@ el("addProduct")?.addEventListener("submit", async function (event) {
   const payload = await safeJson(res);
   if (!res.ok) {
     console.error("Ürün ekleme başarısız:", res.status, payload);
-    alert(payload?.error || "Ürün eklenemedi");
+    alert(payload?.error || payload?.message || "Ürün eklenemedi");
     return;
   }
 
