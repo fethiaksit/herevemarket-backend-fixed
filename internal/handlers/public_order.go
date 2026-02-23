@@ -22,10 +22,10 @@ import (
 ========================= */
 
 type createOrderItemRequest struct {
-	ProductID string  `json:"productId" binding:"required"`
-	Name      string  `json:"name"`
-	Price     float64 `json:"price"`
-	Quantity  int     `json:"quantity" binding:"required"`
+	ProductID string   `json:"productId" binding:"required"`
+	Name      string   `json:"name"`
+	Price     *float64 `json:"price"`
+	Quantity  int      `json:"quantity" binding:"required"`
 }
 
 type createOrderCustomerRequest struct {
@@ -73,7 +73,31 @@ func CreateOrder(db *mongo.Database, jwtSecret string) gin.HandlerFunc {
 			return
 		}
 
-		order, err := buildOrderFromRequest(req)
+		resolvedItems, err := resolveOrderItems(c.Request.Context(), db, req.Items)
+		if err != nil {
+			var stockErr outOfStockError
+			if errors.As(err, &stockErr) {
+				c.JSON(http.StatusBadRequest, gin.H{
+					"error":     "Stok yetersiz",
+					"productId": stockErr.ProductID.Hex(),
+					"available": stockErr.Available,
+					"requested": stockErr.Requested,
+				})
+				return
+			}
+			var notFoundErr productNotFoundError
+			if errors.As(err, &notFoundErr) {
+				c.JSON(http.StatusBadRequest, gin.H{
+					"error":     "Ürün bulunamadı",
+					"productId": notFoundErr.ProductID.Hex(),
+				})
+				return
+			}
+			respondWithError(c, http.StatusBadRequest, route, err.Error())
+			return
+		}
+
+		order, err := buildOrderFromResolvedItems(req, resolvedItems)
 		if err != nil {
 			respondWithError(c, http.StatusBadRequest, route, err.Error())
 			return
@@ -92,9 +116,6 @@ func CreateOrder(db *mongo.Database, jwtSecret string) gin.HandlerFunc {
 
 		var orderID primitive.ObjectID
 		_, err = session.WithTransaction(ctx, func(sessCtx mongo.SessionContext) (interface{}, error) {
-			calculatedItems := make([]models.OrderItem, 0, len(order.Items))
-			calculatedTotal := 0.0
-
 			for _, item := range order.Items {
 				var rawProduct bson.M
 				err := db.Collection("products").FindOne(
@@ -123,16 +144,6 @@ func CreateOrder(db *mongo.Database, jwtSecret string) gin.HandlerFunc {
 						Requested: item.Quantity,
 					}
 				}
-
-				unitPrice := effectiveProductPrice(product.Price, product.SaleEnabled, product.SalePrice)
-				calculatedItems = append(calculatedItems, models.OrderItem{
-					ProductID: item.ProductID,
-					Name:      product.Name,
-					Price:     unitPrice,
-					Quantity:  item.Quantity,
-				})
-				calculatedTotal += unitPrice * float64(item.Quantity)
-
 				filter := bson.M{
 					"_id":       item.ProductID,
 					"isDeleted": bson.M{"$ne": true},
@@ -152,10 +163,6 @@ func CreateOrder(db *mongo.Database, jwtSecret string) gin.HandlerFunc {
 					}
 				}
 			}
-
-			order.Items = calculatedItems
-			order.TotalPrice = calculatedTotal
-
 			res, err := db.Collection("orders").InsertOne(sessCtx, order)
 			if err != nil {
 				return nil, err
@@ -235,46 +242,73 @@ func GetOrders(db *mongo.Database) gin.HandlerFunc {
    BUILD ORDER
 ========================= */
 
-func buildOrderFromRequest(req createOrderRequest) (models.Order, error) {
-	if len(req.Items) == 0 {
-		return models.Order{}, errors.New("at least one item is required")
+func resolveOrderItems(ctx context.Context, db *mongo.Database, reqItems []createOrderItemRequest) ([]models.OrderItem, error) {
+	if len(reqItems) == 0 {
+		return nil, errors.New("at least one item is required")
 	}
 
-	if req.PaymentMethod.ID != "cash" && req.PaymentMethod.ID != "card" {
-		return models.Order{}, errors.New("invalid payment method")
-	}
-
-	items := make([]models.OrderItem, 0, len(req.Items))
-	var total float64
-
-	for _, item := range req.Items {
+	items := make([]models.OrderItem, 0, len(reqItems))
+	for _, item := range reqItems {
 		productID, err := primitive.ObjectIDFromHex(item.ProductID)
 		if err != nil {
-			return models.Order{}, errors.New("invalid productId")
+			return nil, errors.New("invalid productId")
 		}
 
 		if item.Quantity <= 0 {
-			return models.Order{}, errors.New("quantity must be greater than zero")
+			return nil, errors.New("quantity must be greater than zero")
 		}
 
+		var rawProduct bson.M
+		err = db.Collection("products").FindOne(
+			ctx,
+			bson.M{"_id": productID, "isDeleted": bson.M{"$ne": true}},
+		).Decode(&rawProduct)
+		if err == mongo.ErrNoDocuments {
+			return nil, productNotFoundError{ProductID: productID}
+		}
+		if err != nil {
+			return nil, err
+		}
+
+		product, err := normalizeProductDocument(rawProduct)
+		if err != nil {
+			return nil, err
+		}
+
+		if product.Stock < item.Quantity {
+			return nil, outOfStockError{ProductID: productID, Available: product.Stock, Requested: item.Quantity}
+		}
+
+		unitPrice := effectiveProductPrice(product.Price, product.SaleEnabled, product.SalePrice)
 		items = append(items, models.OrderItem{
 			ProductID: productID,
-			Name:      strings.TrimSpace(item.Name),
-			Price:     0,
+			Name:      strings.TrimSpace(product.Name),
+			Price:     unitPrice,
 			Quantity:  item.Quantity,
 		})
 	}
 
-	order := models.Order{
+	return items, nil
+}
+
+func buildOrderFromResolvedItems(req createOrderRequest, items []models.OrderItem) (models.Order, error) {
+	if req.PaymentMethod.ID != "cash" && req.PaymentMethod.ID != "card" {
+		return models.Order{}, errors.New("invalid payment method")
+	}
+
+	var total float64
+	for _, item := range items {
+		total += item.Price * float64(item.Quantity)
+	}
+
+	return models.Order{
 		Items:         items,
 		TotalPrice:    total,
 		Customer:      models.OrderCustomer(req.Customer),
-		PaymentMethod: req.PaymentMethod.ID, // 🔥 sadece "card" / "cash" kaydedilir
+		PaymentMethod: req.PaymentMethod.ID,
 		Status:        "pending",
 		CreatedAt:     time.Now(),
-	}
-
-	return order, nil
+	}, nil
 }
 
 func userIDFromHeader(header, secret string) (*primitive.ObjectID, error) {
