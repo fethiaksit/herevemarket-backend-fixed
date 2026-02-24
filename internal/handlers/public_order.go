@@ -1,8 +1,11 @@
 package handlers
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"log"
 	"net/http"
 	"strings"
@@ -39,11 +42,39 @@ type createOrderPaymentMethodRequest struct {
 	Label string `json:"label"`
 }
 
+func (p *createOrderPaymentMethodRequest) UnmarshalJSON(data []byte) error {
+	trimmed := strings.TrimSpace(string(data))
+	if trimmed == "" || trimmed == "null" {
+		return nil
+	}
+
+	if strings.HasPrefix(trimmed, "\"") {
+		var value string
+		if err := json.Unmarshal(data, &value); err != nil {
+			return err
+		}
+
+		p.ID = strings.TrimSpace(value)
+		p.Label = strings.TrimSpace(value)
+		return nil
+	}
+
+	type paymentMethodAlias createOrderPaymentMethodRequest
+	var parsed paymentMethodAlias
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		return err
+	}
+
+	p.ID = strings.TrimSpace(parsed.ID)
+	p.Label = strings.TrimSpace(parsed.Label)
+	return nil
+}
+
 type createOrderRequest struct {
-	Items         []createOrderItemRequest        `json:"items" binding:"required"`
-	TotalPrice    float64                         `json:"totalPrice"`
-	Customer      createOrderCustomerRequest      `json:"customer" binding:"required"`
-	PaymentMethod createOrderPaymentMethodRequest `json:"paymentMethod" binding:"required"`
+	Items         []createOrderItemRequest         `json:"items" binding:"required"`
+	TotalPrice    float64                          `json:"totalPrice"`
+	Customer      *createOrderCustomerRequest      `json:"customer" binding:"required"`
+	PaymentMethod *createOrderPaymentMethodRequest `json:"paymentMethod" binding:"required"`
 }
 
 /* =========================
@@ -61,15 +92,28 @@ func CreateOrder(db *mongo.Database, jwtSecret string) gin.HandlerFunc {
 		}
 
 		var req createOrderRequest
+		rawBody, readErr := io.ReadAll(c.Request.Body)
+		if readErr != nil {
+			respondOrderError(c, http.StatusBadRequest, "Unable to read request body")
+			return
+		}
+		c.Request.Body = io.NopCloser(bytes.NewBuffer(rawBody))
 		if err := c.ShouldBindJSON(&req); err != nil {
-			respondWithError(c, http.StatusBadRequest, route, "invalid request body")
+			log.Printf("[ORDER] [DEBUG] invalid order payload: %s", strings.TrimSpace(string(rawBody)))
+			respondOrderError(c, http.StatusBadRequest, "Invalid JSON format or missing required fields")
+			return
+		}
+		log.Printf("[ORDER] [DEBUG] received order payload: %s", strings.TrimSpace(string(rawBody)))
+
+		if validationErr := validateCreateOrderRequest(req); validationErr != nil {
+			respondOrderError(c, http.StatusBadRequest, validationErr.Error())
 			return
 		}
 
 		userID, err := userIDFromHeader(c.GetHeader("Authorization"), jwtSecret)
 		if err != nil {
 			log.Println("[ORDER] [ERROR] token validation failed:", err)
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+			respondOrderError(c, http.StatusUnauthorized, "unauthorized")
 			return
 		}
 
@@ -77,29 +121,21 @@ func CreateOrder(db *mongo.Database, jwtSecret string) gin.HandlerFunc {
 		if err != nil {
 			var stockErr outOfStockError
 			if errors.As(err, &stockErr) {
-				c.JSON(http.StatusBadRequest, gin.H{
-					"error":     "Stok yetersiz",
-					"productId": stockErr.ProductID.Hex(),
-					"available": stockErr.Available,
-					"requested": stockErr.Requested,
-				})
+				respondOrderError(c, http.StatusBadRequest, "Stok yetersiz")
 				return
 			}
 			var notFoundErr productNotFoundError
 			if errors.As(err, &notFoundErr) {
-				c.JSON(http.StatusBadRequest, gin.H{
-					"error":     "Ürün bulunamadı",
-					"productId": notFoundErr.ProductID.Hex(),
-				})
+				respondOrderError(c, http.StatusBadRequest, "Ürün bulunamadı")
 				return
 			}
-			respondWithError(c, http.StatusBadRequest, route, err.Error())
+			respondOrderError(c, http.StatusBadRequest, err.Error())
 			return
 		}
 
 		order, err := buildOrderFromResolvedItems(req, resolvedItems)
 		if err != nil {
-			respondWithError(c, http.StatusBadRequest, route, err.Error())
+			respondOrderError(c, http.StatusBadRequest, err.Error())
 			return
 		}
 		order.UserID = userID
@@ -109,7 +145,7 @@ func CreateOrder(db *mongo.Database, jwtSecret string) gin.HandlerFunc {
 
 		session, err := db.Client().StartSession()
 		if err != nil {
-			respondWithError(c, http.StatusInternalServerError, route, "db error")
+			respondOrderError(c, http.StatusInternalServerError, "db error")
 			return
 		}
 		defer session.EndSession(ctx)
@@ -175,23 +211,15 @@ func CreateOrder(db *mongo.Database, jwtSecret string) gin.HandlerFunc {
 		if err != nil {
 			var stockErr outOfStockError
 			if errors.As(err, &stockErr) {
-				c.JSON(http.StatusBadRequest, gin.H{
-					"error":     "Stok yetersiz",
-					"productId": stockErr.ProductID.Hex(),
-					"available": stockErr.Available,
-					"requested": stockErr.Requested,
-				})
+				respondOrderError(c, http.StatusBadRequest, "Stok yetersiz")
 				return
 			}
 			var notFoundErr productNotFoundError
 			if errors.As(err, &notFoundErr) {
-				c.JSON(http.StatusBadRequest, gin.H{
-					"error":     "Ürün bulunamadı",
-					"productId": notFoundErr.ProductID.Hex(),
-				})
+				respondOrderError(c, http.StatusBadRequest, "Ürün bulunamadı")
 				return
 			}
-			respondWithError(c, http.StatusInternalServerError, route, "db error")
+			respondOrderError(c, http.StatusInternalServerError, "db error")
 			return
 		}
 
@@ -292,6 +320,13 @@ func resolveOrderItems(ctx context.Context, db *mongo.Database, reqItems []creat
 }
 
 func buildOrderFromResolvedItems(req createOrderRequest, items []models.OrderItem) (models.Order, error) {
+	if req.PaymentMethod == nil {
+		return models.Order{}, errors.New("paymentMethod is required")
+	}
+	if req.Customer == nil {
+		return models.Order{}, errors.New("customer is required")
+	}
+
 	if req.PaymentMethod.ID != "cash" && req.PaymentMethod.ID != "card" {
 		return models.Order{}, errors.New("invalid payment method")
 	}
@@ -304,11 +339,55 @@ func buildOrderFromResolvedItems(req createOrderRequest, items []models.OrderIte
 	return models.Order{
 		Items:         items,
 		TotalPrice:    total,
-		Customer:      models.OrderCustomer(req.Customer),
+		Customer:      models.OrderCustomer(*req.Customer),
 		PaymentMethod: req.PaymentMethod.ID,
 		Status:        "pending",
 		CreatedAt:     time.Now(),
 	}, nil
+}
+
+func validateCreateOrderRequest(req createOrderRequest) error {
+	if len(req.Items) == 0 {
+		return errors.New("items array must not be empty")
+	}
+
+	for _, item := range req.Items {
+		if strings.TrimSpace(item.ProductID) == "" {
+			return errors.New("productId is required for each item")
+		}
+		if item.Quantity <= 0 {
+			return errors.New("quantity must be greater than zero for each item")
+		}
+		if item.Price == nil || *item.Price <= 0 {
+			return errors.New("price must be greater than zero for each item")
+		}
+	}
+
+	if req.PaymentMethod == nil {
+		return errors.New("paymentMethod is required")
+	}
+	if strings.TrimSpace(req.PaymentMethod.ID) == "" {
+		return errors.New("paymentMethod id is required")
+	}
+
+	if req.Customer == nil {
+		return errors.New("customer is required")
+	}
+	if strings.TrimSpace(req.Customer.Title) == "" {
+		return errors.New("customer title is required")
+	}
+	if strings.TrimSpace(req.Customer.Detail) == "" {
+		return errors.New("customer detail is required")
+	}
+
+	return nil
+}
+
+func respondOrderError(c *gin.Context, status int, message string) {
+	c.AbortWithStatusJSON(status, gin.H{
+		"success": false,
+		"message": message,
+	})
 }
 
 func userIDFromHeader(header, secret string) (*primitive.ObjectID, error) {
