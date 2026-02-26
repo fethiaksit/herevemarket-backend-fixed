@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"net/http"
 	"os"
 
 	"github.com/gin-gonic/gin"
@@ -25,16 +26,32 @@ func main() {
 	log.Println("MongoDB connected to:", db.Name())
 
 	if err := database.EnsureProductIndexes(db); err != nil {
-		log.Println("⚠️ product index warning: %v", err)
+		log.Printf("⚠️ product index warning: %v", err)
 	}
 	if err := database.EnsureUserIndexes(db); err != nil {
-		log.Println("⚠️ user index warning: %v", err)
+		log.Printf("⚠️ user index warning: %v", err)
 	}
 	if err := database.EnsureOrderIndexes(db); err != nil {
-		log.Println("⚠️ order index warning: %v", err)
+		log.Printf("⚠️ order index warning: %v", err)
 	}
 
 	r := gin.Default()
+	r.Use(func(c *gin.Context) {
+		origin := c.GetHeader("Origin")
+		if origin == "https://api.herevemarket.com" || origin == "https://siparisler.herevemarket.com" {
+			c.Header("Access-Control-Allow-Origin", origin)
+			c.Header("Access-Control-Allow-Credentials", "true")
+			c.Header("Access-Control-Allow-Headers", "Origin, Content-Type, Accept, Authorization")
+			c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+		}
+
+		if c.Request.Method == http.MethodOptions {
+			c.AbortWithStatus(http.StatusNoContent)
+			return
+		}
+
+		c.Next()
+	})
 	r.LoadHTMLGlob("templates/**/*")
 	r.Static("/public", "/app/public")
 
@@ -60,17 +77,23 @@ func main() {
 	))
 	r.POST("/auth/logout", handlers.Logout(db))
 
-	r.POST("/admin/login", handlers.AdminLogin(db, config.AppEnv.JWTSecret, config.AppEnv.AccessTokenTTL))
+	r.POST("/admin/login", handlers.AdminLogin(
+		db,
+		config.AppEnv.JWTSecret,
+		config.AppEnv.AccessTokenTTL,
+		config.AppEnv.RefreshTokenTTL,
+	))
 
 	r.GET("/products", handlers.GetProducts(db))
 	r.GET("/categories", handlers.GetCategories(db))
 	r.GET("/products/campaign", handlers.GetCampaignProducts(db))
 	r.POST("/orders", handlers.CreateOrder(db, config.AppEnv.JWTSecret))
-	r.GET("/orders", handlers.GetOrders(db))
 
 	user := r.Group("/user")
 	user.Use(middleware.UserAuth(config.AppEnv.JWTSecret))
 	{
+		user.GET("/orders", handlers.GetMyOrders(db))
+
 		user.GET("/addresses", handlers.GetUserAddresses(db))
 		user.POST("/addresses", handlers.CreateUserAddress(db))
 		user.PUT("/addresses/:id", handlers.UpdateUserAddress(db))
@@ -98,6 +121,9 @@ func main() {
 		admin.POST("/categories", handlers.CreateCategory(db))
 		admin.PUT("/categories/:id", handlers.UpdateCategory(db))
 		admin.DELETE("/categories/:id", handlers.DeleteCategory(db))
+
+		admin.GET("/orders", handlers.AdminGetOrders(db))
+		admin.GET("/orders/:id", handlers.AdminGetOrderByID(db))
 
 		admin.DELETE("/orders/:id", handlers.DeleteOrder(db))
 	}

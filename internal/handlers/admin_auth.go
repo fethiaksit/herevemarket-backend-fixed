@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/golang-jwt/jwt/v5"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"golang.org/x/crypto/bcrypt"
@@ -20,7 +19,7 @@ type AdminLoginRequest struct {
 	Password string `json:"password"`
 }
 
-func AdminLogin(db *mongo.Database, jwtSecret string, accessTTL time.Duration) gin.HandlerFunc {
+func AdminLogin(db *mongo.Database, jwtSecret string, accessTTL, refreshTTL time.Duration) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var req AdminLoginRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
@@ -62,23 +61,18 @@ func AdminLogin(db *mongo.Database, jwtSecret string, accessTTL time.Duration) g
 			return
 		}
 
-		// ✅ TOKEN
-		claims := jwt.MapClaims{
-			"sub":   admin.ID.Hex(),
-			"role":  "admin",
-			"email": admin.Email,
-			"exp":   time.Now().Add(accessTTL).Unix(),
-		}
-
-		token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-		signed, err := token.SignedString([]byte(jwtSecret))
+		tokens, err := issueTokens(c, db, admin.ID, admin.Email, "admin", jwtSecret, accessTTL, refreshTTL)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "token generation failed"})
 			return
 		}
 
+		setRefreshCookie(c, tokens.RefreshToken, refreshTTL)
+
 		c.JSON(http.StatusOK, gin.H{
-			"token": signed,
+			"token":        tokens.AccessToken,
+			"accessToken":  tokens.AccessToken,
+			"refreshToken": tokens.RefreshToken,
+			"expiresIn":    tokens.ExpiresIn,
 		})
 	}
 }
