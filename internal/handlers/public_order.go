@@ -241,32 +241,6 @@ func CreateOrder(db *mongo.Database, jwtSecret string) gin.HandlerFunc {
 }
 
 /* =========================
-   GET ORDERS
-========================= */
-
-func GetOrders(db *mongo.Database) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
-		defer cancel()
-
-		cursor, err := db.Collection("orders").Find(ctx, bson.M{})
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Orders could not be fetched"})
-			return
-		}
-		defer cursor.Close(ctx)
-
-		var orders []models.Order
-		if err := cursor.All(ctx, &orders); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse orders"})
-			return
-		}
-
-		c.JSON(http.StatusOK, orders)
-	}
-}
-
-/* =========================
    BUILD ORDER
 ========================= */
 

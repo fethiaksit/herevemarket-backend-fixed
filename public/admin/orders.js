@@ -1,6 +1,6 @@
 requireAuth();
 
-const ORDERS_API_URL = "/orders";
+const ORDERS_API_URL = "/admin/api/orders";
 const DELETE_ORDER_API_URL = "/admin/api/orders";
 
 function formatDateTime(value) {

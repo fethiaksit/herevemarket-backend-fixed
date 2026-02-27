@@ -27,6 +27,8 @@ import (
 	"backend/internal/models"
 )
 
+const refreshCookieName = "refresh_token"
+
 type RegisterRequest struct {
 	FirstName string `json:"firstName" binding:"required"`
 	LastName  string `json:"lastName" binding:"required"`
@@ -173,16 +175,19 @@ func Login(db *mongo.Database, jwtSecret string, accessTTL, refreshTTL time.Dura
 				return
 			}
 
-			accessToken, err := issueUserToken(user.ID, user.Email, jwtSecret, accessTTL)
+			tokens, err := issueTokens(c, db, user.ID, user.Email, "user", jwtSecret, accessTTL, refreshTTL)
 			if err != nil {
 				log.Println("[AUTH] [ERROR] login token generation failed:", err)
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "token generation failed"})
 				return
 			}
 
+			setRefreshCookie(c, tokens.RefreshToken, refreshTTL)
+
 			log.Println("[AUTH] [INFO] user login succeeded:", user.Email)
 			c.JSON(http.StatusOK, gin.H{
-				"accessToken": accessToken,
+				"accessToken":  tokens.AccessToken,
+				"refreshToken": tokens.RefreshToken,
+				"expiresIn":    tokens.ExpiresIn,
 				"user": gin.H{
 					"id":    user.ID.Hex(),
 					"name":  user.Name,
@@ -221,6 +226,8 @@ func Login(db *mongo.Database, jwtSecret string, accessTTL, refreshTTL time.Dura
 			return
 		}
 
+		setRefreshCookie(c, tokens.RefreshToken, refreshTTL)
+
 		log.Println("[AUTH] [INFO] customer login succeeded:", customer.Email)
 		c.JSON(http.StatusOK, gin.H{
 			"accessToken":  tokens.AccessToken,
@@ -238,13 +245,7 @@ func Login(db *mongo.Database, jwtSecret string, accessTTL, refreshTTL time.Dura
 
 func Refresh(db *mongo.Database, jwtSecret string, accessTTL, refreshTTL time.Duration) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		var req RefreshRequest
-		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
-			return
-		}
-
-		plain := strings.TrimSpace(req.RefreshToken)
+		plain := readRefreshToken(c)
 		if plain == "" {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "refreshToken is required"})
 			return
@@ -269,21 +270,46 @@ func Refresh(db *mongo.Database, jwtSecret string, accessTTL, refreshTTL time.Du
 			return
 		}
 
-		var user models.Customer
-		if err := db.Collection("customers").FindOne(ctx, bson.M{"_id": token.UserID}).Decode(&user); err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "user not found"})
-			return
+		userID := token.UserID
+		userEmail := ""
+		userRole := "user"
+		responseUser := gin.H{"id": userID.Hex()}
+
+		var customer models.Customer
+		if err := db.Collection("customers").FindOne(ctx, bson.M{"_id": userID}).Decode(&customer); err == nil {
+			if !customer.IsActive {
+				c.JSON(http.StatusForbidden, gin.H{"error": "user is inactive"})
+				return
+			}
+			userEmail = customer.Email
+			userRole = customer.Role
+			responseUser = gin.H{
+				"id":        customer.ID.Hex(),
+				"firstName": customer.FirstName,
+				"lastName":  customer.LastName,
+				"email":     customer.Email,
+			}
+		} else {
+			var user models.User
+			if err := db.Collection("users").FindOne(ctx, bson.M{"_id": userID}).Decode(&user); err != nil {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "user not found"})
+				return
+			}
+			userEmail = user.Email
+			userRole = "user"
+			responseUser = gin.H{
+				"id":    user.ID.Hex(),
+				"name":  user.Name,
+				"email": user.Email,
+			}
 		}
 
-		if !user.IsActive {
-			c.JSON(http.StatusForbidden, gin.H{"error": "user is inactive"})
-			return
-		}
-
-		newTokens, err := issueTokens(c, db, user.ID, user.Email, user.Role, jwtSecret, accessTTL, refreshTTL)
+		newTokens, err := issueTokens(c, db, userID, userEmail, userRole, jwtSecret, accessTTL, refreshTTL)
 		if err != nil {
 			return
 		}
+
+		setRefreshCookie(c, newTokens.RefreshToken, refreshTTL)
 
 		_, _ = db.Collection("refresh_tokens").UpdateByID(ctx, token.ID, bson.M{
 			"$set": bson.M{
@@ -294,27 +320,17 @@ func Refresh(db *mongo.Database, jwtSecret string, accessTTL, refreshTTL time.Du
 
 		c.JSON(http.StatusOK, gin.H{
 			"accessToken":  newTokens.AccessToken,
+			"token":        newTokens.AccessToken,
 			"refreshToken": newTokens.RefreshToken,
 			"expiresIn":    newTokens.ExpiresIn,
-			"user": LoginResponseUser{
-				ID:        user.ID.Hex(),
-				FirstName: user.FirstName,
-				LastName:  user.LastName,
-				Email:     user.Email,
-			},
+			"user":         responseUser,
 		})
 	}
 }
 
 func Logout(db *mongo.Database) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		var req RefreshRequest
-		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
-			return
-		}
-
-		plain := strings.TrimSpace(req.RefreshToken)
+		plain := readRefreshToken(c)
 		if plain == "" {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "refreshToken is required"})
 			return
@@ -334,12 +350,49 @@ func Logout(db *mongo.Database) gin.HandlerFunc {
 			return
 		}
 		if res.MatchedCount == 0 {
+			clearRefreshCookie(c)
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid refresh token"})
 			return
 		}
 
+		clearRefreshCookie(c)
 		c.JSON(http.StatusOK, gin.H{"message": "logged out"})
 	}
+}
+
+func readRefreshToken(c *gin.Context) string {
+	if cookieToken, err := c.Cookie(refreshCookieName); err == nil {
+		cookieToken = strings.TrimSpace(cookieToken)
+		if cookieToken != "" {
+			return cookieToken
+		}
+	}
+
+	var req RefreshRequest
+	if err := c.ShouldBindJSON(&req); err == nil {
+		return strings.TrimSpace(req.RefreshToken)
+	}
+
+	return ""
+}
+
+func setRefreshCookie(c *gin.Context, refreshToken string, refreshTTL time.Duration) {
+	c.SetSameSite(http.SameSiteLaxMode)
+	c.SetCookie(
+		refreshCookieName,
+		refreshToken,
+		int(refreshTTL.Seconds()),
+		"/",
+		".herevemarket.com",
+		true,
+		true,
+	)
+
+}
+
+func clearRefreshCookie(c *gin.Context) {
+	c.SetSameSite(http.SameSiteLaxMode)
+	c.SetCookie(refreshCookieName, "", -1, "/", ".herevemarket.com", true, true)
 }
 
 func registerCustomer(c *gin.Context, db *mongo.Database, req RegisterRequest) {
