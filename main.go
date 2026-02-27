@@ -124,6 +124,7 @@ func main() {
 
 		admin.GET("/orders", handlers.AdminGetOrders(db))
 		admin.GET("/orders/:id", handlers.AdminGetOrderByID(db))
+		admin.PUT("/orders/:id/status", handlers.AdminUpdateOrderStatus(db))
 
 		admin.DELETE("/orders/:id", handlers.DeleteOrder(db))
 	}
