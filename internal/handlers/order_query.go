@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"net/http"
 	"strings"
@@ -26,7 +27,8 @@ var validOrderStatuses = map[string]struct{}{
 
 type adminOrderResponse struct {
 	ID            primitive.ObjectID   `json:"id" bson:"_id"`
-	UserID        *primitive.ObjectID  `json:"userId" bson:"userId"`
+	OrderCode     string               `json:"orderCode"`
+	UserID        *primitive.ObjectID  `json:"userId,omitempty" bson:"userId"`
 	UserPhone     string               `json:"userPhone,omitempty"`
 	Items         []models.OrderItem   `json:"items" bson:"items"`
 	TotalPrice    float64              `json:"totalPrice" bson:"totalPrice"`
@@ -50,14 +52,14 @@ func AdminGetOrders(db *mongo.Database) gin.HandlerFunc {
 			return
 		}
 
-		filter, err := buildAdminOrdersFilter(c)
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+		defer cancel()
+
+		filter, err := buildAdminOrdersFilter(ctx, db, c)
 		if err != nil {
 			respondWithError(c, http.StatusBadRequest, "GET /admin/api/orders", err.Error())
 			return
 		}
-
-		ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
-		defer cancel()
 
 		total, err := db.Collection("orders").CountDocuments(ctx, filter)
 		if err != nil {
@@ -84,6 +86,7 @@ func AdminGetOrders(db *mongo.Database) gin.HandlerFunc {
 		}
 
 		attachUserPhones(ctx, db, orders)
+		enrichAdminOrders(orders)
 
 		totalPages := int64(0)
 		if total > 0 {
@@ -125,6 +128,7 @@ func AdminGetOrderByID(db *mongo.Database) gin.HandlerFunc {
 
 		orders := []adminOrderResponse{order}
 		attachUserPhones(ctx, db, orders)
+		enrichAdminOrders(orders)
 		c.JSON(http.StatusOK, orders[0])
 	}
 }
@@ -173,11 +177,12 @@ func AdminUpdateOrderStatus(db *mongo.Database) gin.HandlerFunc {
 		}
 		orders := []adminOrderResponse{order}
 		attachUserPhones(ctx, db, orders)
+		enrichAdminOrders(orders)
 		c.JSON(http.StatusOK, gin.H{"message": "status updated", "data": orders[0]})
 	}
 }
 
-func buildAdminOrdersFilter(c *gin.Context) (bson.M, error) {
+func buildAdminOrdersFilter(ctx context.Context, db *mongo.Database, c *gin.Context) (bson.M, error) {
 	filter := bson.M{}
 
 	status := strings.ToLower(strings.TrimSpace(c.Query("status")))
@@ -196,38 +201,64 @@ func buildAdminOrdersFilter(c *gin.Context) (bson.M, error) {
 		filter["paymentMethod"] = paymentMethod
 	}
 
-	createdAt := bson.M{}
-	if startDate := strings.TrimSpace(c.Query("startDate")); startDate != "" {
-		parsed, err := time.Parse(time.RFC3339, startDate)
-		if err != nil {
-			return nil, errors.New("invalid startDate")
-		}
-		createdAt["$gte"] = parsed
-	}
-	if endDate := strings.TrimSpace(c.Query("endDate")); endDate != "" {
-		parsed, err := time.Parse(time.RFC3339, endDate)
-		if err != nil {
-			return nil, errors.New("invalid endDate")
-		}
-		createdAt["$lte"] = parsed
-	}
-	if len(createdAt) > 0 {
-		filter["createdAt"] = createdAt
-	}
-
 	search := strings.TrimSpace(c.Query("search"))
 	if search != "" {
-		searchID, err := primitive.ObjectIDFromHex(search)
+		orderIDExpr := bson.M{"$expr": bson.M{"$regexMatch": bson.M{
+			"input":   bson.M{"$toString": "$_id"},
+			"regex":   fmt.Sprintf("%s$", strings.ToLower(search)),
+			"options": "i",
+		}}}
+
+		userIDs, err := findUserIDsByPhone(ctx, db, search)
 		if err != nil {
-			return nil, errors.New("search must be a valid orderId or userId")
+			return nil, errors.New("search failed")
 		}
-		filter["$or"] = bson.A{
-			bson.M{"_id": searchID},
-			bson.M{"userId": searchID},
+
+		orFilters := bson.A{orderIDExpr}
+		if len(userIDs) > 0 {
+			orFilters = append(orFilters, bson.M{"userId": bson.M{"$in": userIDs}})
 		}
+		filter["$or"] = orFilters
 	}
 
 	return filter, nil
+}
+
+func findUserIDsByPhone(ctx context.Context, db *mongo.Database, search string) ([]primitive.ObjectID, error) {
+	cursor, err := db.Collection("users").Find(ctx, bson.M{
+		"phone": bson.M{"$regex": primitive.Regex{Pattern: search, Options: "i"}},
+	}, options.Find().SetProjection(bson.M{"_id": 1}))
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+
+	var users []struct {
+		ID primitive.ObjectID `bson:"_id"`
+	}
+	if err := cursor.All(ctx, &users); err != nil {
+		return nil, err
+	}
+
+	ids := make([]primitive.ObjectID, 0, len(users))
+	for _, user := range users {
+		ids = append(ids, user.ID)
+	}
+	return ids, nil
+}
+
+func buildOrderCode(id primitive.ObjectID) string {
+	hexID := id.Hex()
+	if len(hexID) <= 8 {
+		return strings.ToUpper(hexID)
+	}
+	return strings.ToUpper(hexID[len(hexID)-8:])
+}
+
+func enrichAdminOrders(orders []adminOrderResponse) {
+	for i := range orders {
+		orders[i].OrderCode = buildOrderCode(orders[i].ID)
+	}
 }
 
 func attachUserPhones(ctx context.Context, db *mongo.Database, orders []adminOrderResponse) {
