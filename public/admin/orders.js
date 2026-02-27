@@ -219,6 +219,7 @@ function openDetail(order) {
   if (!dialog || !content) return;
 
   const items = Array.isArray(order.items) ? order.items : [];
+  const address = order.address && typeof order.address === "object" ? order.address : null;
   const itemRows = items.map((item) => {
     const subtotal = (Number(item.price) || 0) * (Number(item.quantity) || 0);
     return `<li>${item.name || "-"} x${item.quantity || 0} – ${formatCurrency(subtotal)}</li>`;
@@ -228,6 +229,7 @@ function openDetail(order) {
     <p><strong>Sipariş Kodu:</strong> ${order.orderCode || "-"}</p>
     <p><strong>Tarih:</strong> ${formatDateTime(order.createdAt)}</p>
     <p><strong>Telefon:</strong> ${order.userPhone || "-"}</p>
+    ${renderAddressDetail(address)}
     <p><strong>Ödeme:</strong> ${getPaymentLabel(order.paymentMethod)}</p>
     <p><strong>Durum:</strong> ${getStatusLabel(order.status)}</p>
     <h4>Ürünler:</h4>
@@ -239,6 +241,25 @@ function openDetail(order) {
   dialog.showModal();
 }
 
+function renderAddressDetail(address) {
+  if (!address) {
+    return '<p><strong>Adres:</strong> —</p>';
+  }
+
+  const title = address.title || "-";
+  const fullText = address.fullText || "-";
+  const note = address.note || "-";
+
+  return `
+    <div class="hm-order-address">
+      <h4>Adres</h4>
+      <p><strong>Adres Başlığı:</strong> ${title}</p>
+      <p class="hm-order-address-text"><strong>Açık Adres:</strong> ${fullText}</p>
+      <p><strong>Adres Notu:</strong> ${note}</p>
+    </div>
+  `;
+}
+
 async function openDetailById(orderId) {
   if (!orderId) return;
   const res = await fetch(`${ORDERS_API_URL}/${orderId}`, { headers: authHeaders() });
@@ -248,7 +269,7 @@ async function openDetailById(orderId) {
     setText("ordersStatus", "Siparişler alınamadı. Lütfen tekrar deneyin.");
     return;
   }
-  openDetail(payload);
+  openDetail(payload?.data || payload);
 }
 
 function closeDetail() {

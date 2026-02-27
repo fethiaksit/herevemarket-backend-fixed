@@ -30,6 +30,7 @@ type adminOrderResponse struct {
 	OrderCode     string               `json:"orderCode"`
 	UserID        *primitive.ObjectID  `json:"userId,omitempty" bson:"userId"`
 	UserPhone     string               `json:"userPhone,omitempty"`
+	Address       *adminOrderAddress   `json:"address"`
 	Items         []models.OrderItem   `json:"items" bson:"items"`
 	TotalPrice    float64              `json:"totalPrice" bson:"totalPrice"`
 	Customer      models.OrderCustomer `json:"customer" bson:"customer"`
@@ -39,9 +40,27 @@ type adminOrderResponse struct {
 	UpdatedAt     *time.Time           `json:"updatedAt,omitempty" bson:"updatedAt,omitempty"`
 }
 
+type adminOrderAddress struct {
+	Title        string `json:"title,omitempty"`
+	Name         string `json:"name,omitempty"`
+	Phone        string `json:"phone,omitempty"`
+	City         string `json:"city,omitempty"`
+	District     string `json:"district,omitempty"`
+	Neighborhood string `json:"neighborhood,omitempty"`
+	FullText     string `json:"fullText,omitempty"`
+	Note         string `json:"note,omitempty"`
+}
+
 type userPhoneRecord struct {
 	ID    primitive.ObjectID `bson:"_id"`
 	Phone string             `bson:"phone"`
+}
+
+type adminOrderUserRecord struct {
+	ID        primitive.ObjectID `bson:"_id"`
+	Name      string             `bson:"name"`
+	Phone     string             `bson:"phone"`
+	Addresses []models.Address   `bson:"addresses"`
 }
 
 func AdminGetOrders(db *mongo.Database) gin.HandlerFunc {
@@ -128,6 +147,7 @@ func AdminGetOrderByID(db *mongo.Database) gin.HandlerFunc {
 
 		orders := []adminOrderResponse{order}
 		attachUserPhones(ctx, db, orders)
+		attachAddresses(ctx, db, orders)
 		enrichAdminOrders(orders)
 		c.JSON(http.StatusOK, orders[0])
 	}
@@ -177,9 +197,104 @@ func AdminUpdateOrderStatus(db *mongo.Database) gin.HandlerFunc {
 		}
 		orders := []adminOrderResponse{order}
 		attachUserPhones(ctx, db, orders)
+		attachAddresses(ctx, db, orders)
 		enrichAdminOrders(orders)
 		c.JSON(http.StatusOK, gin.H{"message": "status updated", "data": orders[0]})
 	}
+}
+
+func attachAddresses(ctx context.Context, db *mongo.Database, orders []adminOrderResponse) {
+	if len(orders) == 0 {
+		return
+	}
+
+	userMap := loadAdminOrderUsers(ctx, db, orders)
+	for i := range orders {
+		orders[i].Address = buildAdminOrderAddress(orders[i], userMap)
+	}
+}
+
+func loadAdminOrderUsers(ctx context.Context, db *mongo.Database, orders []adminOrderResponse) map[primitive.ObjectID]adminOrderUserRecord {
+	userIDSet := map[primitive.ObjectID]struct{}{}
+	userIDs := make([]primitive.ObjectID, 0, len(orders))
+	for _, order := range orders {
+		if order.UserID == nil {
+			continue
+		}
+		if _, exists := userIDSet[*order.UserID]; exists {
+			continue
+		}
+		userIDSet[*order.UserID] = struct{}{}
+		userIDs = append(userIDs, *order.UserID)
+	}
+
+	if len(userIDs) == 0 {
+		return map[primitive.ObjectID]adminOrderUserRecord{}
+	}
+
+	cursor, err := db.Collection("users").Find(
+		ctx,
+		bson.M{"_id": bson.M{"$in": userIDs}},
+		options.Find().SetProjection(bson.M{"name": 1, "phone": 1, "addresses": 1}),
+	)
+	if err != nil {
+		return map[primitive.ObjectID]adminOrderUserRecord{}
+	}
+	defer cursor.Close(ctx)
+
+	var users []adminOrderUserRecord
+	if err := cursor.All(ctx, &users); err != nil {
+		return map[primitive.ObjectID]adminOrderUserRecord{}
+	}
+
+	userMap := make(map[primitive.ObjectID]adminOrderUserRecord, len(users))
+	for _, user := range users {
+		userMap[user.ID] = user
+	}
+
+	return userMap
+}
+
+func buildAdminOrderAddress(order adminOrderResponse, userMap map[primitive.ObjectID]adminOrderUserRecord) *adminOrderAddress {
+	var user adminOrderUserRecord
+	if order.UserID != nil {
+		user = userMap[*order.UserID]
+	}
+
+	if order.Customer.Title != "" || order.Customer.Detail != "" || order.Customer.Note != "" {
+		return &adminOrderAddress{
+			Title:    order.Customer.Title,
+			Name:     user.Name,
+			Phone:    firstNonEmpty(order.UserPhone, user.Phone),
+			FullText: order.Customer.Detail,
+			Note:     order.Customer.Note,
+		}
+	}
+
+	for _, addr := range user.Addresses {
+		if addr.Detail == "" && addr.Title == "" && addr.Note == "" {
+			continue
+		}
+		return &adminOrderAddress{
+			Title:    addr.Title,
+			Name:     user.Name,
+			Phone:    firstNonEmpty(order.UserPhone, user.Phone),
+			FullText: addr.Detail,
+			Note:     addr.Note,
+		}
+	}
+
+	return nil
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }
 
 func buildAdminOrdersFilter(ctx context.Context, db *mongo.Database, c *gin.Context) (bson.M, error) {
