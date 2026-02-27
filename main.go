@@ -69,6 +69,7 @@ func main() {
 		config.AppEnv.RefreshTokenTTL,
 	))
 	r.GET("/auth/me", middleware.UserAuth(config.AppEnv.JWTSecret), handlers.GetMe(db))
+	r.PUT("/auth/me", middleware.UserAuth(config.AppEnv.JWTSecret), handlers.UpdateMe(db))
 	r.POST("/auth/refresh", handlers.Refresh(
 		db,
 		config.AppEnv.JWTSecret,

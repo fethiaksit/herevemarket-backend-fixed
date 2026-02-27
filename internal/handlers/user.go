@@ -28,6 +28,11 @@ type favoriteRequest struct {
 	ProductID string `json:"productId" binding:"required"`
 }
 
+type updateMeRequest struct {
+	Name  string `json:"name"`
+	Phone string `json:"phone"`
+}
+
 func GetMe(db *mongo.Database) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		userID, ok := c.Get("userId")
@@ -54,6 +59,73 @@ func GetMe(db *mongo.Database) gin.HandlerFunc {
 			"phone":     user.Phone,
 			"addresses": user.Addresses,
 			"createdAt": user.CreatedAt,
+			"updatedAt": user.UpdatedAt,
+		})
+	}
+}
+
+func UpdateMe(db *mongo.Database) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		userID, ok := c.Get("userId")
+		if !ok {
+			log.Println("[AUTH] [ERROR] userId missing in context")
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+			return
+		}
+
+		var req updateMeRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			log.Println("[AUTH] [ERROR] invalid update me body:", err)
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+			return
+		}
+
+		name := strings.TrimSpace(req.Name)
+		phone := strings.TrimSpace(req.Phone)
+		if name == "" || phone == "" || len(name) > 100 || len(phone) > 32 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+			return
+		}
+
+		updatedAt := time.Now()
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+		defer cancel()
+
+		result, err := db.Collection("users").UpdateByID(ctx, userID, bson.M{
+			"$set": bson.M{
+				"name":      name,
+				"phone":     phone,
+				"updatedAt": updatedAt,
+			},
+		})
+		if err != nil {
+			log.Println("[AUTH] [ERROR] update me failed:", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "db error"})
+			return
+		}
+
+		if result.MatchedCount == 0 {
+			c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+			return
+		}
+
+		var user models.User
+		if err := db.Collection("users").FindOne(ctx, bson.M{"_id": userID}).Decode(&user); err != nil {
+			if err == mongo.ErrNoDocuments {
+				c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+				return
+			}
+
+			log.Println("[AUTH] [ERROR] get updated me failed:", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "db error"})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"id":        user.ID.Hex(),
+			"email":     user.Email,
+			"name":      user.Name,
+			"phone":     user.Phone,
 			"updatedAt": user.UpdatedAt,
 		})
 	}
