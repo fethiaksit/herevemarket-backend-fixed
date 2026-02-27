@@ -143,3 +143,24 @@
     padding: 14px;
   }
 }
+
+
+.hm-order-address {
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 12px;
+  background: #f8fafc;
+  margin: 8px 0;
+}
+
+.hm-order-address h4 {
+  margin: 0 0 8px;
+}
+
+.hm-order-address p {
+  margin: 4px 0;
+}
+
+.hm-order-address-text {
+  white-space: pre-wrap;
+}
