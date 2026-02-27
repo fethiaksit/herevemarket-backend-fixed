@@ -2,8 +2,10 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"math"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -15,21 +17,51 @@ import (
 	"backend/internal/models"
 )
 
+var validOrderStatuses = map[string]struct{}{
+	"pending":   {},
+	"approved":  {},
+	"cancelled": {},
+	"delivered": {},
+}
+
+type adminOrderResponse struct {
+	ID            primitive.ObjectID   `json:"id" bson:"_id"`
+	UserID        *primitive.ObjectID  `json:"userId" bson:"userId"`
+	UserPhone     string               `json:"userPhone,omitempty"`
+	Items         []models.OrderItem   `json:"items" bson:"items"`
+	TotalPrice    float64              `json:"totalPrice" bson:"totalPrice"`
+	Customer      models.OrderCustomer `json:"customer" bson:"customer"`
+	PaymentMethod string               `json:"paymentMethod" bson:"paymentMethod"`
+	Status        string               `json:"status" bson:"status"`
+	CreatedAt     time.Time            `json:"createdAt" bson:"createdAt"`
+	UpdatedAt     *time.Time           `json:"updatedAt,omitempty" bson:"updatedAt,omitempty"`
+}
+
+type userPhoneRecord struct {
+	ID    primitive.ObjectID `bson:"_id"`
+	Phone string             `bson:"phone"`
+}
+
 func AdminGetOrders(db *mongo.Database) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		page, limit, err := parsePaginationParams(c.Query("page"), c.Query("limit"))
 		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			respondWithError(c, http.StatusBadRequest, "GET /admin/api/orders", err.Error())
+			return
+		}
+
+		filter, err := buildAdminOrdersFilter(c)
+		if err != nil {
+			respondWithError(c, http.StatusBadRequest, "GET /admin/api/orders", err.Error())
 			return
 		}
 
 		ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 		defer cancel()
 
-		filter := bson.M{}
 		total, err := db.Collection("orders").CountDocuments(ctx, filter)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "db error"})
+			respondWithError(c, http.StatusInternalServerError, "GET /admin/api/orders", "db error")
 			return
 		}
 
@@ -40,16 +72,18 @@ func AdminGetOrders(db *mongo.Database) gin.HandlerFunc {
 
 		cursor, err := db.Collection("orders").Find(ctx, filter, opts)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "db error"})
+			respondWithError(c, http.StatusInternalServerError, "GET /admin/api/orders", "db error")
 			return
 		}
 		defer cursor.Close(ctx)
 
-		var orders []models.Order
+		var orders []adminOrderResponse
 		if err := cursor.All(ctx, &orders); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "decode error"})
+			respondWithError(c, http.StatusInternalServerError, "GET /admin/api/orders", "decode error")
 			return
 		}
+
+		attachUserPhones(ctx, db, orders)
 
 		totalPages := int64(0)
 		if total > 0 {
@@ -72,24 +106,173 @@ func AdminGetOrderByID(db *mongo.Database) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		orderID, err := primitive.ObjectIDFromHex(c.Param("id"))
 		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+			respondWithError(c, http.StatusBadRequest, "GET /admin/api/orders/:id", "invalid id")
 			return
 		}
 
 		ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 		defer cancel()
 
-		var order models.Order
+		var order adminOrderResponse
 		if err := db.Collection("orders").FindOne(ctx, bson.M{"_id": orderID}).Decode(&order); err != nil {
-			if err == mongo.ErrNoDocuments {
-				c.JSON(http.StatusNotFound, gin.H{"error": "order not found"})
+			if errors.Is(err, mongo.ErrNoDocuments) {
+				respondWithError(c, http.StatusNotFound, "GET /admin/api/orders/:id", "order not found")
 				return
 			}
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "db error"})
+			respondWithError(c, http.StatusInternalServerError, "GET /admin/api/orders/:id", "db error")
 			return
 		}
 
-		c.JSON(http.StatusOK, order)
+		orders := []adminOrderResponse{order}
+		attachUserPhones(ctx, db, orders)
+		c.JSON(http.StatusOK, orders[0])
+	}
+}
+
+func AdminUpdateOrderStatus(db *mongo.Database) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		orderID, err := primitive.ObjectIDFromHex(c.Param("id"))
+		if err != nil {
+			respondWithError(c, http.StatusBadRequest, "PUT /admin/api/orders/:id/status", "invalid id")
+			return
+		}
+
+		var payload struct {
+			Status string `json:"status"`
+		}
+		if err := c.ShouldBindJSON(&payload); err != nil {
+			respondWithError(c, http.StatusBadRequest, "PUT /admin/api/orders/:id/status", "invalid payload")
+			return
+		}
+
+		status := strings.ToLower(strings.TrimSpace(payload.Status))
+		if _, ok := validOrderStatuses[status]; !ok {
+			respondWithError(c, http.StatusBadRequest, "PUT /admin/api/orders/:id/status", "invalid status")
+			return
+		}
+
+		now := time.Now()
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+		defer cancel()
+
+		update := bson.M{"$set": bson.M{"status": status, "updatedAt": now}}
+		res, err := db.Collection("orders").UpdateOne(ctx, bson.M{"_id": orderID}, update)
+		if err != nil {
+			respondWithError(c, http.StatusInternalServerError, "PUT /admin/api/orders/:id/status", "db error")
+			return
+		}
+		if res.MatchedCount == 0 {
+			respondWithError(c, http.StatusNotFound, "PUT /admin/api/orders/:id/status", "order not found")
+			return
+		}
+
+		var order adminOrderResponse
+		if err := db.Collection("orders").FindOne(ctx, bson.M{"_id": orderID}).Decode(&order); err != nil {
+			respondWithError(c, http.StatusInternalServerError, "PUT /admin/api/orders/:id/status", "db error")
+			return
+		}
+		orders := []adminOrderResponse{order}
+		attachUserPhones(ctx, db, orders)
+		c.JSON(http.StatusOK, gin.H{"message": "status updated", "data": orders[0]})
+	}
+}
+
+func buildAdminOrdersFilter(c *gin.Context) (bson.M, error) {
+	filter := bson.M{}
+
+	status := strings.ToLower(strings.TrimSpace(c.Query("status")))
+	if status != "" {
+		if _, ok := validOrderStatuses[status]; !ok {
+			return nil, errors.New("invalid status filter")
+		}
+		filter["status"] = status
+	}
+
+	paymentMethod := strings.ToLower(strings.TrimSpace(c.Query("paymentMethod")))
+	if paymentMethod != "" {
+		if paymentMethod != "cash" && paymentMethod != "card" {
+			return nil, errors.New("invalid paymentMethod filter")
+		}
+		filter["paymentMethod"] = paymentMethod
+	}
+
+	createdAt := bson.M{}
+	if startDate := strings.TrimSpace(c.Query("startDate")); startDate != "" {
+		parsed, err := time.Parse(time.RFC3339, startDate)
+		if err != nil {
+			return nil, errors.New("invalid startDate")
+		}
+		createdAt["$gte"] = parsed
+	}
+	if endDate := strings.TrimSpace(c.Query("endDate")); endDate != "" {
+		parsed, err := time.Parse(time.RFC3339, endDate)
+		if err != nil {
+			return nil, errors.New("invalid endDate")
+		}
+		createdAt["$lte"] = parsed
+	}
+	if len(createdAt) > 0 {
+		filter["createdAt"] = createdAt
+	}
+
+	search := strings.TrimSpace(c.Query("search"))
+	if search != "" {
+		searchID, err := primitive.ObjectIDFromHex(search)
+		if err != nil {
+			return nil, errors.New("search must be a valid orderId or userId")
+		}
+		filter["$or"] = bson.A{
+			bson.M{"_id": searchID},
+			bson.M{"userId": searchID},
+		}
+	}
+
+	return filter, nil
+}
+
+func attachUserPhones(ctx context.Context, db *mongo.Database, orders []adminOrderResponse) {
+	if len(orders) == 0 {
+		return
+	}
+
+	userIDSet := map[primitive.ObjectID]struct{}{}
+	userIDs := make([]primitive.ObjectID, 0, len(orders))
+	for _, order := range orders {
+		if order.UserID == nil {
+			continue
+		}
+		if _, exists := userIDSet[*order.UserID]; exists {
+			continue
+		}
+		userIDSet[*order.UserID] = struct{}{}
+		userIDs = append(userIDs, *order.UserID)
+	}
+
+	if len(userIDs) == 0 {
+		return
+	}
+
+	userCursor, err := db.Collection("users").Find(ctx, bson.M{"_id": bson.M{"$in": userIDs}}, options.Find().SetProjection(bson.M{"phone": 1}))
+	if err != nil {
+		return
+	}
+	defer userCursor.Close(ctx)
+
+	var users []userPhoneRecord
+	if err := userCursor.All(ctx, &users); err != nil {
+		return
+	}
+
+	phoneByUserID := make(map[primitive.ObjectID]string, len(users))
+	for _, user := range users {
+		phoneByUserID[user.ID] = user.Phone
+	}
+
+	for i := range orders {
+		if orders[i].UserID == nil {
+			continue
+		}
+		orders[i].UserPhone = phoneByUserID[*orders[i].UserID]
 	}
 }
 
@@ -97,19 +280,19 @@ func GetMyOrders(db *mongo.Database) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		userIDValue, exists := c.Get("userId")
 		if !exists {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+			respondWithError(c, http.StatusUnauthorized, "GET /user/orders", "unauthorized")
 			return
 		}
 
 		userID, ok := userIDValue.(primitive.ObjectID)
 		if !ok {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+			respondWithError(c, http.StatusUnauthorized, "GET /user/orders", "unauthorized")
 			return
 		}
 
 		page, limit, err := parsePaginationParams(c.Query("page"), c.Query("limit"))
 		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			respondWithError(c, http.StatusBadRequest, "GET /user/orders", err.Error())
 			return
 		}
 
@@ -119,7 +302,7 @@ func GetMyOrders(db *mongo.Database) gin.HandlerFunc {
 		filter := bson.M{"userId": userID}
 		total, err := db.Collection("orders").CountDocuments(ctx, filter)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "db error"})
+			respondWithError(c, http.StatusInternalServerError, "GET /user/orders", "db error")
 			return
 		}
 
@@ -130,14 +313,14 @@ func GetMyOrders(db *mongo.Database) gin.HandlerFunc {
 
 		cursor, err := db.Collection("orders").Find(ctx, filter, opts)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "db error"})
+			respondWithError(c, http.StatusInternalServerError, "GET /user/orders", "db error")
 			return
 		}
 		defer cursor.Close(ctx)
 
 		var orders []models.Order
 		if err := cursor.All(ctx, &orders); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "decode error"})
+			respondWithError(c, http.StatusInternalServerError, "GET /user/orders", "decode error")
 			return
 		}
 

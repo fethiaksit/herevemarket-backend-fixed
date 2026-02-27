@@ -31,4 +31,5 @@ type Order struct {
 	PaymentMethod string              `bson:"paymentMethod" json:"paymentMethod"`
 	Status        string              `bson:"status" json:"status"`
 	CreatedAt     time.Time           `bson:"createdAt" json:"createdAt"`
+	UpdatedAt     *time.Time          `bson:"updatedAt,omitempty" json:"updatedAt,omitempty"`
 }

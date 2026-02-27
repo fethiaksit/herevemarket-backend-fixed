@@ -21,24 +21,99 @@
 <main>
   <section>
     <h2 class="page-title">Siparişler</h2>
-    <div id="ordersStatus" class="muted"></div>
+
+    <div class="orders-toolbar">
+      <div class="filters-grid">
+        <label>
+          Durum
+          <select id="statusFilter">
+            <option value="">Tümü</option>
+            <option value="pending">Pending</option>
+            <option value="approved">Approved</option>
+            <option value="cancelled">Cancelled</option>
+            <option value="delivered">Delivered</option>
+          </select>
+        </label>
+
+        <label>
+          Ödeme
+          <select id="paymentFilter">
+            <option value="">Tümü</option>
+            <option value="cash">Nakit</option>
+            <option value="card">Kart</option>
+          </select>
+        </label>
+
+        <label>
+          Başlangıç tarihi
+          <input type="datetime-local" id="startDateFilter">
+        </label>
+
+        <label>
+          Bitiş tarihi
+          <input type="datetime-local" id="endDateFilter">
+        </label>
+
+        <label>
+          Arama (orderId / userId)
+          <input type="text" id="searchFilter" placeholder="ObjectID">
+        </label>
+
+        <label>
+          Limit
+          <select id="limitFilter">
+            <option value="10">10</option>
+            <option value="20" selected>20</option>
+            <option value="50">50</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="inline-actions">
+        <button type="button" id="applyFiltersButton" class="small">Filtrele</button>
+        <button type="button" id="clearFiltersButton" class="small ghost">Filtreleri Temizle</button>
+        <button type="button" id="refreshOrdersButton" class="small ghost">Yenile</button>
+      </div>
+
+      <div class="orders-meta">
+        <span id="ordersStatus" class="muted"></span>
+        <span id="ordersPaginationInfo" class="muted"></span>
+        <span id="ordersLastUpdated" class="muted">Son güncelleme: -</span>
+      </div>
+    </div>
+
     <div class="table-wrapper">
       <table class="orders-table">
         <thead>
           <tr>
-            <th>Sipariş ID</th>
             <th>Tarih</th>
-            <th>Müşteri</th>
-            <th>Ödeme</th>
-            <th class="numeric">Ürün</th>
+            <th>Sipariş ID</th>
+            <th>Kullanıcı ID</th>
+            <th>Telefon</th>
             <th class="numeric">Toplam</th>
+            <th>Ödeme</th>
             <th>Durum</th>
+            <th class="numeric">Ürün adedi</th>
             <th class="actions">Aksiyon</th>
           </tr>
         </thead>
         <tbody id="ordersTableBody"></tbody>
       </table>
     </div>
+
+    <div class="pagination-controls">
+      <button type="button" id="prevPageButton" class="small ghost">Önceki</button>
+      <span id="currentPageText">Sayfa 1</span>
+      <button type="button" id="nextPageButton" class="small ghost">Sonraki</button>
+    </div>
+
+    <dialog id="orderDetailDialog" class="order-dialog">
+      <div class="order-dialog-header">
+        <h3>Sipariş Detayı</h3>
+        <button type="button" id="closeDetailButton" class="small ghost">Kapat</button>
+      </div>
+      <div id="orderDetailContent"></div>
+    </dialog>
   </section>
 </main>
 <script src="/public/admin/admin.js"></script>

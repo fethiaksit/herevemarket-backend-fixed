@@ -1,9 +1,8 @@
 package handlers
 
 import (
+	"fmt"
 	"strconv"
-
-	"github.com/gin-gonic/gin"
 )
 
 func parsePaginationParams(pageStr, limitStr string) (int64, int64, error) {
@@ -13,7 +12,7 @@ func parsePaginationParams(pageStr, limitStr string) (int64, int64, error) {
 	if pageStr != "" {
 		p, err := strconv.ParseInt(pageStr, 10, 64)
 		if err != nil || p < 1 {
-			return 0, 0, gin.Error{}
+			return 0, 0, fmt.Errorf("invalid page")
 		}
 		page = p
 	}
@@ -21,9 +20,13 @@ func parsePaginationParams(pageStr, limitStr string) (int64, int64, error) {
 	if limitStr != "" {
 		l, err := strconv.ParseInt(limitStr, 10, 64)
 		if err != nil || l < 1 {
-			return 0, 0, gin.Error{}
+			return 0, 0, fmt.Errorf("invalid limit")
 		}
 		limit = l
+	}
+
+	if limit > 100 {
+		limit = 100
 	}
 
 	return page, limit, nil

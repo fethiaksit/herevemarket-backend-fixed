@@ -130,12 +130,6 @@ button.danger.ghost {
 .table .inline-actions {
   justify-content: flex-end;
 }
-.order-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
 .inline-actions {
   display: flex;
   gap: 8px;
@@ -298,4 +292,49 @@ hr {
 
 .search-row input {
   flex: 1;
+}
+
+.orders-toolbar {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.filters-grid {
+  display: grid;
+  gap: 8px;
+}
+@media (min-width: 900px) {
+  .filters-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+.orders-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.pagination-controls {
+  margin-top: 10px;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.status-editor {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+.order-dialog {
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  width: min(900px, 92vw);
+}
+.order-dialog::backdrop {
+  background: rgba(15, 23, 42, 0.45);
+}
+.order-dialog-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
 }

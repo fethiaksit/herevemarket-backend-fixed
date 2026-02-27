@@ -95,6 +95,16 @@ func EnsureOrderIndexes(db *mongo.Database) error {
 		Options: options.Index().SetName("userId_index"),
 	}
 
+	statusCreatedAtIndex := mongo.IndexModel{
+		Keys:    bson.D{{Key: "status", Value: 1}, {Key: "createdAt", Value: -1}},
+		Options: options.Index().SetName("status_createdAt_index"),
+	}
+
+	createdAtIndex := mongo.IndexModel{
+		Keys:    bson.D{{Key: "createdAt", Value: -1}},
+		Options: options.Index().SetName("createdAt_desc_index"),
+	}
+
 	log.Println("EnsureOrderIndexes: creating userId_index index")
 	_, err := indexes.CreateOne(ctx, userIDIndex)
 	if err != nil {
@@ -102,5 +112,18 @@ func EnsureOrderIndexes(db *mongo.Database) error {
 		return err
 	}
 	log.Println("EnsureOrderIndexes: userId_index index created")
+	log.Println("EnsureOrderIndexes: creating status_createdAt_index index")
+	if _, err := indexes.CreateOne(ctx, statusCreatedAtIndex); err != nil {
+		log.Println("EnsureOrderIndexes: status/createdAt index error:", err)
+		return err
+	}
+	log.Println("EnsureOrderIndexes: status_createdAt_index index created")
+
+	log.Println("EnsureOrderIndexes: creating createdAt_desc_index index")
+	if _, err := indexes.CreateOne(ctx, createdAtIndex); err != nil {
+		log.Println("EnsureOrderIndexes: createdAt index error:", err)
+		return err
+	}
+	log.Println("EnsureOrderIndexes: createdAt_desc_index index created")
 	return nil
 }
